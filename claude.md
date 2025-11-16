@@ -44,13 +44,15 @@ Each plugin should follow this structure:
 ### 2. Security Best Practices
 
 **API Key Management**:
-- ✅ Store API keys encrypted in database
+- ✅ Store API keys securely using platform configuration (note: some platforms like PrestaShop store config in database plain text - ensure database security)
 - ✅ Use HTTPS for all webhook requests
 - ✅ Implement HMAC-SHA256 signature verification
 - ✅ Log authentication failures for monitoring
+- ✅ Restrict database access to authorized users only
 - ❌ Never log API keys in plain text
 - ❌ Never expose API keys in client-side code
 - ❌ Never include API keys in URLs
+- ❌ Never commit API keys to version control
 
 **Data Protection**:
 - Sanitize all user inputs

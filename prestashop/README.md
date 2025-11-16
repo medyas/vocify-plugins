@@ -298,10 +298,11 @@ Queue for failed webhooks requiring retry.
 
 ### Data Protection
 
-- **API Key Storage**: Encrypted in PrestaShop configuration
+- **API Key Storage**: Stored in PrestaShop configuration table (`ps_configuration`). Note: PrestaShop's Configuration class stores values in plain text in the database. Ensure database access is properly secured.
 - **HTTPS Only**: All webhook requests use HTTPS
 - **HMAC Signature**: Every webhook includes SHA-256 signature for verification
 - **No PII in Logs**: Phone numbers and emails are not logged in plain text
+- **Database Security**: Ensure proper database access controls and server security to protect sensitive configuration data
 
 ### Best Practices
 

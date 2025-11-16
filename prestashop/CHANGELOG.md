@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2025-11-16
 
+### Fixed (Post-Initial Release)
+- **CRITICAL**: Fixed PHP 7.1 compatibility issue - Replaced `str_starts_with()` (PHP 8.0+) with `substr()` for phone number validation
+- **IMPORTANT**: Corrected transaction ID - Now retrieves actual payment transaction ID instead of carrier ID
+- Added missing `financialStatus` field to payload (maps PrestaShop order states to standard values)
+- Added missing `fulfillmentStatus` field to payload (tracks shipping status)
+- Added missing `paidAt` field to payload (includes payment timestamp when available)
+- Ensured currency codes are uppercase (ISO 4217 compliance)
+- Ensured country codes are uppercase (ISO 3166-1 alpha-2 compliance)
+- Clarified API key storage security in documentation (stored in database, not encrypted by PrestaShop)
+
 ### Added
 - Initial release of Vocify AI PrestaShop Module
 - Core module structure with PrestaShop 1.7.x and 8.x compatibility

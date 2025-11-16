@@ -118,11 +118,42 @@ class VocifyWebhookService
                 $invoiceState = $state->iso_code;
             }
 
+            // Get payment transaction ID
+            $transactionId = '';
+            $orderPayments = $order->getOrderPaymentCollection();
+            if ($orderPayments && count($orderPayments) > 0) {
+                foreach ($orderPayments as $payment) {
+                    if (!empty($payment->transaction_id)) {
+                        $transactionId = $payment->transaction_id;
+                        break;
+                    }
+                }
+            }
+
+            // Determine financial status based on payment and order state
+            $financialStatus = $this->getFinancialStatus($order);
+
+            // Determine fulfillment status
+            $fulfillmentStatus = $this->getFulfillmentStatus($order);
+
+            // Get paid date
+            $paidAt = null;
+            if ($orderPayments && count($orderPayments) > 0) {
+                foreach ($orderPayments as $payment) {
+                    if (!empty($payment->date_add)) {
+                        $paidAt = date('c', strtotime($payment->date_add));
+                        break;
+                    }
+                }
+            }
+
             // Build unified payload
             $payload = array(
                 'orderId' => (string)$order->id,
                 'orderNumber' => $order->reference,
                 'status' => $orderState->name,
+                'financialStatus' => $financialStatus,
+                'fulfillmentStatus' => $fulfillmentStatus,
 
                 'customer' => array(
                     'id' => (string)$customer->id,
@@ -141,7 +172,7 @@ class VocifyWebhookService
                     'tax' => (float)($order->total_paid_tax_incl - $order->total_paid_tax_excl),
                     'total' => (float)$order->total_paid,
                 ),
-                'currency' => $currency->iso_code,
+                'currency' => strtoupper($currency->iso_code),
 
                 'shippingAddress' => array(
                     'firstName' => $addressDelivery->firstname,
@@ -152,7 +183,7 @@ class VocifyWebhookService
                     'city' => $addressDelivery->city,
                     'state' => $deliveryState,
                     'zip' => $addressDelivery->postcode,
-                    'country' => $deliveryCountry->iso_code,
+                    'country' => strtoupper($deliveryCountry->iso_code),
                     'phone' => $addressDelivery->phone_mobile ?: $addressDelivery->phone,
                 ),
 
@@ -165,15 +196,16 @@ class VocifyWebhookService
                     'city' => $addressInvoice->city,
                     'state' => $invoiceState,
                     'zip' => $addressInvoice->postcode,
-                    'country' => $invoiceCountry->iso_code,
+                    'country' => strtoupper($invoiceCountry->iso_code),
                     'phone' => $addressInvoice->phone_mobile ?: $addressInvoice->phone,
                 ),
 
                 'paymentMethod' => $order->payment,
-                'transactionId' => $order->id_carrier,
+                'transactionId' => $transactionId,
 
                 'createdAt' => date('c', strtotime($order->date_add)),
                 'updatedAt' => date('c', strtotime($order->date_upd)),
+                'paidAt' => $paidAt,
 
                 'requiresShipping' => true,
                 'taxIncluded' => Group::getPriceDisplayMethod($customer->id_default_group) == PS_TAX_INC,
@@ -240,7 +272,8 @@ class VocifyWebhookService
         $phone = preg_replace('/[\s\-\(\)\.]/', '', $phone);
 
         // Ensure it starts with + if it looks like E.164
-        if (!empty($phone) && !str_starts_with($phone, '+')) {
+        // PHP 7.1 compatible check (str_starts_with requires PHP 8.0+)
+        if (!empty($phone) && substr($phone, 0, 1) !== '+') {
             // If it's a number and doesn't start with +, it might need country code
             // For now, just return as-is. Consider using libphonenumber-php for proper validation
             return $phone;
@@ -475,5 +508,103 @@ class VocifyWebhookService
     private function removeFromFailedQueue($orderId)
     {
         Db::getInstance()->delete('vocify_failed_webhooks', 'id_order = ' . (int)$orderId);
+    }
+
+    /**
+     * Get financial status based on order state
+     *
+     * @param Order $order
+     * @return string
+     */
+    private function getFinancialStatus($order)
+    {
+        // PrestaShop order states mapping to financial status
+        // Reference: https://devdocs.prestashop.com/1.7/development/database/structure/order_state/
+
+        $orderState = new OrderState($order->current_state);
+
+        // Check if order is paid
+        if ($orderState->paid == 1) {
+            // Check if there's any refund
+            if ($order->getTotalPaid() > 0 && $order->getTotalPaid() < $order->total_paid) {
+                return 'partially_refunded';
+            }
+            if ($order->getTotalPaid() == 0) {
+                return 'refunded';
+            }
+            return 'paid';
+        }
+
+        // Check if order is cancelled
+        if (in_array($order->current_state, array(6, 7, 8))) { // Cancelled, Refunded, Payment error
+            return 'voided';
+        }
+
+        // Check specific states
+        switch ($order->current_state) {
+            case 1: // Awaiting check payment
+            case 10: // Awaiting bank wire payment
+            case 11: // Remote payment accepted
+                return 'pending';
+
+            case 2: // Payment accepted
+            case 3: // Processing in progress
+            case 4: // Shipped
+            case 5: // Delivered
+            case 9: // Payment received
+                return 'paid';
+
+            case 6: // Canceled
+            case 7: // Refunded
+            case 8: // Payment error
+                return 'voided';
+
+            default:
+                // Check if order has any payments
+                $orderPayments = $order->getOrderPaymentCollection();
+                if ($orderPayments && count($orderPayments) > 0) {
+                    return 'paid';
+                }
+                return 'pending';
+        }
+    }
+
+    /**
+     * Get fulfillment status based on order state
+     *
+     * @param Order $order
+     * @return string
+     */
+    private function getFulfillmentStatus($order)
+    {
+        $orderState = new OrderState($order->current_state);
+
+        // Check if order is shipped or delivered
+        switch ($order->current_state) {
+            case 4: // Shipped
+            case 5: // Delivered
+                return 'fulfilled';
+
+            case 6: // Canceled
+            case 7: // Refunded
+                return 'restocked';
+
+            case 1: // Awaiting payment
+            case 2: // Payment accepted
+            case 3: // Processing in progress
+            case 10: // Awaiting bank wire
+            case 11: // Remote payment accepted
+                return 'unfulfilled';
+
+            default:
+                // Check if order has shipped state
+                if ($orderState->shipped == 1) {
+                    return 'fulfilled';
+                }
+                if ($orderState->delivery == 1) {
+                    return 'fulfilled';
+                }
+                return 'unfulfilled';
+        }
     }
 }
