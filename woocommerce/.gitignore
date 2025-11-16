@@ -1,0 +1,37 @@
+# Composer
+/vendor/
+composer.lock
+composer.phar
+
+# WordPress
+.wordpress-org/
+node_modules/
+
+# Build artifacts
+/build/
+/dist/
+*.zip
+
+# Development
+.DS_Store
+Thumbs.db
+*.log
+*.cache
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+
+# Testing
+/tests/
+/tmp/
+phpunit.xml
+.phpunit.result.cache
+
+# Environment
+.env
+.env.local
+.env.*.local

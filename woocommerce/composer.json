@@ -1,0 +1,42 @@
+{
+    "name": "vocify-ai/woocommerce-plugin",
+    "description": "Vocify AI - Order Confirmation Calls for WooCommerce. Automate AI-powered voice confirmation calls for your online orders.",
+    "type": "wordpress-plugin",
+    "keywords": [
+        "woocommerce",
+        "wordpress",
+        "plugin",
+        "vocify",
+        "ai",
+        "voice",
+        "order-confirmation",
+        "webhook",
+        "ecommerce"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Vocify AI",
+            "email": "developers@vocify-ai.com",
+            "homepage": "https://vocify-ai.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4.0",
+        "giggsey/libphonenumber-for-php": "^8.13"
+    },
+    "autoload": {
+        "classmap": [
+            "includes/"
+        ]
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    },
+    "support": {
+        "email": "developers@vocify-ai.com",
+        "docs": "https://docs.vocify-ai.com/cms-plugins",
+        "issues": "https://github.com/vocify-ai/woocommerce-plugin/issues"
+    }
+}

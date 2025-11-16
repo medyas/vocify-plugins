@@ -36,10 +36,8 @@ if (file_exists(VOCIFY_AI_PLUGIN_DIR . 'vendor/autoload.php')) {
 
 // Include required files
 require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-webhook-service.php';
-
-// TODO: Create these files
-// require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-admin.php';
-// require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-order-handler.php';
+require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-admin.php';
+require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-order-handler.php';
 
 /**
  * Main Vocify AI Plugin Class
@@ -92,9 +90,9 @@ class Vocify_AI_WooCommerce {
         // Initialize plugin
         $this->init_hooks();
 
-        // TODO: Initialize when classes are created
-        // $this->admin = new Vocify_AI_Admin();
-        // $this->order_handler = new Vocify_AI_Order_Handler();
+        // Initialize admin and order handler
+        $this->admin = new Vocify_AI_Admin();
+        $this->order_handler = new Vocify_AI_Order_Handler();
     }
 
     /**
