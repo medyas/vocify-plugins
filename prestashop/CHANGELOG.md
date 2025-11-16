@@ -11,7 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Planned
 - Bulk retry for failed webhooks from admin panel
-- Phone number validation using libphonenumber-php
 - Email notifications for critical webhook failures
 - Support for custom order statuses configuration
 - Multi-language support for admin interface
@@ -21,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 ## [1.0.0] - 2025-11-16
+
+### Added (Enhancement)
+- **Phone Number Validation**: Integrated `libphonenumber-php` for accurate phone number validation and E.164 formatting
+  - Automatic country detection from shipping address
+  - Validates phone numbers based on country-specific rules
+  - Formats to international E.164 standard (`+12025551234`)
+  - Graceful fallback to basic formatting if library not installed
+  - Optional Composer dependency (module works with or without it)
+- Added `composer.json` for dependency management
+- Added `.gitignore` to exclude vendor directory from version control
 
 ### Fixed (Post-Initial Release)
 - **CRITICAL**: Fixed PHP 7.1 compatibility issue - Replaced `str_starts_with()` (PHP 8.0+) with `substr()` for phone number validation

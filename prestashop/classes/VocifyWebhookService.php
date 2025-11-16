@@ -241,6 +241,13 @@ class VocifyWebhookService
      */
     private function extractPhoneNumber($customer, $addressDelivery, $addressInvoice)
     {
+        // Get default country from delivery address for phone validation
+        $defaultCountry = 'US'; // Fallback
+        if ($addressDelivery->id_country) {
+            $country = new Country($addressDelivery->id_country);
+            $defaultCountry = $country->iso_code;
+        }
+
         // Priority: customer mobile, customer phone, delivery mobile, delivery phone, invoice mobile, invoice phone
         $phones = array(
             isset($customer->phone_mobile) ? $customer->phone_mobile : '',
@@ -253,7 +260,7 @@ class VocifyWebhookService
 
         foreach ($phones as $phone) {
             if (!empty($phone)) {
-                return $this->formatPhoneNumber($phone);
+                return $this->formatPhoneNumber($phone, $defaultCountry);
             }
         }
 
@@ -261,13 +268,43 @@ class VocifyWebhookService
     }
 
     /**
-     * Format phone number (basic cleanup)
+     * Format phone number to E.164 format
+     *
+     * Uses libphonenumber-php if available, otherwise falls back to basic formatting
      *
      * @param string $phone
+     * @param string $defaultCountry ISO country code (e.g., 'US', 'FR')
      * @return string
      */
-    private function formatPhoneNumber($phone)
+    private function formatPhoneNumber($phone, $defaultCountry = 'US')
     {
+        if (empty($phone)) {
+            return '';
+        }
+
+        // Try using libphonenumber-php if available
+        if (class_exists('\libphonenumber\PhoneNumberUtil')) {
+            try {
+                $phoneUtil = \libphonenumber\PhoneNumberUtil::getInstance();
+                $phoneNumber = $phoneUtil->parse($phone, $defaultCountry);
+
+                if ($phoneUtil->isValidNumber($phoneNumber)) {
+                    // Format as E.164 (international format with +)
+                    return $phoneUtil->format($phoneNumber, \libphonenumber\PhoneNumberFormat::E164);
+                }
+            } catch (\libphonenumber\NumberParseException $e) {
+                // Log parsing error in debug mode
+                if (Configuration::get('VOCIFY_DEBUG_MODE')) {
+                    PrestaShopLogger::addLog(
+                        'Vocify AI: Phone number parsing failed - ' . $e->getMessage() . ' - Phone: ' . $phone,
+                        2
+                    );
+                }
+                // Fall through to basic formatting
+            }
+        }
+
+        // Fallback: Basic phone number cleanup
         // Remove spaces, dashes, parentheses, dots
         $phone = preg_replace('/[\s\-\(\)\.]/', '', $phone);
 
@@ -275,7 +312,7 @@ class VocifyWebhookService
         // PHP 7.1 compatible check (str_starts_with requires PHP 8.0+)
         if (!empty($phone) && substr($phone, 0, 1) !== '+') {
             // If it's a number and doesn't start with +, it might need country code
-            // For now, just return as-is. Consider using libphonenumber-php for proper validation
+            // Without libphonenumber, we can't reliably add country code
             return $phone;
         }
 

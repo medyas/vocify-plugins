@@ -124,6 +124,13 @@ Example log messages:
 **Phone Number Validation**:
 - Preferred format: E.164 (`+12025551234`)
 - Use validation libraries: `libphonenumber` (PHP, JS, Python)
+  - **PHP**: `giggsey/libphonenumber-for-php` via Composer
+  - **JavaScript**: `libphonenumber-js` via npm
+  - **Python**: `phonenumbers` via pip
+- Implementation approach:
+  - Make validation library optional (Composer/npm dependency)
+  - Include graceful fallback to basic formatting if library unavailable
+  - Detect country from shipping/billing address for accurate parsing
 - Include country code or configure default country
 
 **Required Fields**:

@@ -28,11 +28,54 @@ The Vocify AI module for PrestaShop enables automated AI-powered voice confirmat
 
 ## Installation
 
-### Method 1: Manual Installation (ZIP Upload)
+### Prerequisites
+
+**PHP Extensions Required**:
+- PHP 7.1 or higher
+- cURL extension
+- JSON extension
+- OpenSSL extension
+
+**Optional but Recommended**:
+- Composer (for phone number validation library)
+
+### Method 1: Installation with Composer (Recommended)
+
+This method includes phone number validation for better accuracy.
 
 1. **Download the Module**
    - Download or clone this repository
-   - Create a ZIP file of the `vocifyai` folder
+   - Navigate to the module directory
+
+2. **Install Dependencies**
+   ```bash
+   cd vocifyai
+   composer install --no-dev --optimize-autoloader
+   ```
+
+3. **Create ZIP File**
+   - Create a ZIP file of the entire `vocifyai` folder (including `vendor/` directory)
+
+4. **Upload to PrestaShop**
+   - Log in to your PrestaShop admin panel
+   - Navigate to **Modules** → **Module Manager**
+   - Click **Upload a module**
+   - Select the `vocifyai.zip` file
+   - Click **Install**
+
+5. **Configure the Module**
+   - After installation, click **Configure**
+   - Enter your Vocify AI API key (obtained from your Vocify AI dashboard)
+   - Enable the integration
+   - Click **Save**
+
+### Method 2: Manual Installation (Without Composer)
+
+This method works without Composer but uses basic phone number formatting.
+
+1. **Download the Module**
+   - Download or clone this repository
+   - Create a ZIP file of the `vocifyai` folder (exclude `vendor/` directory)
 
 2. **Upload to PrestaShop**
    - Log in to your PrestaShop admin panel
@@ -43,23 +86,29 @@ The Vocify AI module for PrestaShop enables automated AI-powered voice confirmat
 
 3. **Configure the Module**
    - After installation, click **Configure**
-   - Enter your Vocify AI API key (obtained from your Vocify AI dashboard)
+   - Enter your Vocify AI API key
    - Enable the integration
    - Click **Save**
 
-### Method 2: Manual FTP Installation
+### Method 3: FTP Installation with Composer
 
-1. **Upload via FTP**
-   - Upload the `vocifyai` folder to `/modules/` directory in your PrestaShop installation
+1. **Install Dependencies Locally**
+   ```bash
+   cd vocifyai
+   composer install --no-dev --optimize-autoloader
+   ```
+
+2. **Upload via FTP**
+   - Upload the entire `vocifyai` folder (including `vendor/`) to `/modules/` directory
    - Ensure file permissions are set correctly (typically 755 for folders, 644 for files)
 
-2. **Install from Admin Panel**
+3. **Install from Admin Panel**
    - Log in to PrestaShop admin
    - Navigate to **Modules** → **Module Manager**
    - Search for "Vocify AI"
    - Click **Install**
 
-3. **Configure**
+4. **Configure**
    - Click **Configure** after installation
    - Enter your API key and enable the integration
 
@@ -136,6 +185,15 @@ The module extracts order data from PrestaShop and transforms it to the [unified
 4. Delivery address phone
 5. Billing address mobile phone
 6. Billing address phone
+
+**Phone Number Validation**:
+- **With Composer**: Uses `libphonenumber-php` for accurate E.164 formatting and validation
+  - Validates phone numbers based on country code
+  - Automatically formats to international E.164 format (`+12025551234`)
+  - Handles various input formats (with/without spaces, dashes, parentheses)
+- **Without Composer**: Basic formatting (removes spaces, dashes, dots)
+  - Fallback option if Composer dependencies are not installed
+  - Still functional but less accurate
 
 **Critical**: Orders without a valid phone number will be logged but may fail to create AI calls.
 

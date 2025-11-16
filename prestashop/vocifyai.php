@@ -12,6 +12,11 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
+// Load Composer autoloader if available (for libphonenumber-php)
+if (file_exists(dirname(__FILE__) . '/vendor/autoload.php')) {
+    require_once dirname(__FILE__) . '/vendor/autoload.php';
+}
+
 require_once dirname(__FILE__) . '/classes/VocifyWebhookService.php';
 
 class VocifyAI extends Module
