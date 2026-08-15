@@ -5,7 +5,7 @@
  * Handles webhook sending, data transformation, and retry logic
  *
  * @package VocifyAI
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 if (!defined('ABSPATH')) {
@@ -16,12 +16,44 @@ class Vocify_AI_Webhook_Service {
 
     const PLATFORM = 'WOOCOMMERCE';
     const MAX_RETRIES = 3;
+    const FAILED_QUEUE_MAX_RETRIES = 5;
+    const FAILED_QUEUE_BATCH = 20;
+
+    /**
+     * Payload builder instance
+     *
+     * @var Vocify_AI_Payload_Builder
+     */
+    private $builder;
+
+    /**
+     * Payload validator instance
+     *
+     * @var Vocify_AI_Payload_Validator
+     */
+    private $validator;
+
+    /**
+     * Signer instance
+     *
+     * @var Vocify_AI_Signer
+     */
+    private $signer;
+
+    /**
+     * Constructor
+     */
+    public function __construct() {
+        $this->builder = new Vocify_AI_Payload_Builder();
+        $this->validator = new Vocify_AI_Payload_Validator();
+        $this->signer = new Vocify_AI_Signer();
+    }
 
     /**
      * Send order to Vocify AI
      *
      * @param WC_Order $order
-     * @return bool
+     * @return array Result: { success, http_code, response, error, retries_exhausted, payload }
      */
     public function send_order($order) {
         $api_key = get_option('vocify_api_key');
@@ -30,15 +62,34 @@ class Vocify_AI_Webhook_Service {
 
         if (empty($api_key)) {
             $this->log($order->get_id(), 'error', 0, 'API key not configured');
-            return false;
+            return $this->result(false, 0, null, 'API key not configured', false, null);
         }
 
         // Transform order to unified payload
         $payload = $this->transform_order($order);
 
         if (!$payload) {
-            $this->log($order->get_id(), 'error', 0, 'Failed to transform order data');
-            return false;
+            $message = 'Failed to transform order data';
+            $this->log($order->get_id(), 'error', 0, $message);
+            return $this->result(false, 0, null, $message, false, null);
+        }
+
+        // Fail fast on payloads the platform would reject with 400 — a local
+        // validation error is a configuration/data problem, not transient.
+        $errors = $this->validator->validate($payload);
+
+        if (count($errors) > 0) {
+            $message = 'Payload validation failed: ' . implode('; ', array_slice($errors, 0, 5));
+            $this->log($order->get_id(), 'error', 0, $message);
+
+            if ($debug_mode) {
+                wc_get_logger()->error(
+                    'Vocify AI payload invalid for order #' . $order->get_id() . ': ' . $message,
+                    array('source' => 'vocify-ai')
+                );
+            }
+
+            return $this->result(false, 400, null, $message, false, $payload);
         }
 
         // Send webhook with retry logic
@@ -49,47 +100,10 @@ class Vocify_AI_Webhook_Service {
      * Transform WooCommerce order to unified payload format
      *
      * @param WC_Order $order
-     * @return array|false
+     * @return array|null
      */
-    private function transform_order($order) {
+    public function transform_order($order) {
         try {
-            // Get order items
-            $items = array();
-            foreach ($order->get_items() as $item_id => $item) {
-                $product = $item->get_product();
-                $product_id = $product ? $product->get_id() : 0;
-                $image_id = $product ? $product->get_image_id() : 0;
-                $image_url = $image_id ? wp_get_attachment_url($image_id) : '';
-
-                // Get product variations/attributes
-                $attributes = array();
-                if ($product && $product->is_type('variation')) {
-                    $attributes = $product->get_variation_attributes();
-                }
-
-                $items[] = array(
-                    'id' => (string)$product_id,
-                    'name' => $item->get_name(),
-                    'sku' => $product ? $product->get_sku() : '',
-                    'quantity' => $item->get_quantity(),
-                    'price' => (float)$order->get_item_total($item, true), // Include tax
-                    'total' => (float)$order->get_line_total($item, true), // Include tax
-                    'image' => $image_url,
-                    'attributes' => $attributes,
-                );
-            }
-
-            // Get phone number with priority
-            $phone = $this->extract_phone_number($order);
-
-            if (empty($phone)) {
-                wc_get_logger()->warning(
-                    'No phone number found for order #' . $order->get_order_number(),
-                    array('source' => 'vocify-ai')
-                );
-            }
-
-            // Get customer data
             $customer_id = $order->get_customer_id();
             $customer_orders_count = 0;
             $customer_total_spent = 0;
@@ -100,41 +114,39 @@ class Vocify_AI_Webhook_Service {
                 $customer_total_spent = $customer->get_total_spent();
             }
 
-            // Get payment transaction ID
-            $transaction_id = $order->get_transaction_id();
+            $default_country = $order->get_billing_country();
+            if (empty($default_country)) {
+                $default_country = $order->get_shipping_country();
+            }
+            if (empty($default_country)) {
+                $default_country = wc()->countries->get_base_country();
+            }
+            if (empty($default_country)) {
+                $default_country = 'US';
+            }
 
-            // Determine financial status
-            $financial_status = $this->get_financial_status($order);
-
-            // Determine fulfillment status
-            $fulfillment_status = $this->get_fulfillment_status($order);
-
-            // Get paid date
-            $paid_at = $order->get_date_paid();
-            $paid_at_iso = $paid_at ? $paid_at->date('c') : null;
-
-            // Build unified payload
-            $payload = array(
-                'orderId' => (string)$order->get_id(),
-                'orderNumber' => $order->get_order_number(),
-                'orderKey' => $order->get_order_key(),
+            // Raw data map — consumed by the platform-agnostic payload builder.
+            $raw = array(
+                'order_id' => (string)$order->get_id(),
+                'order_number' => (string)$order->get_order_number(),
+                'order_key' => $order->get_order_key(),
                 'status' => $order->get_status(),
-                'financialStatus' => $financial_status,
-                'fulfillmentStatus' => $fulfillment_status,
-
+                'financial_status' => $this->get_financial_status($order),
+                'fulfillment_status' => $this->get_fulfillment_status($order),
+                'is_paid' => $order->is_paid(),
+                'total_refunded' => (float)$order->get_total_refunded(),
+                'default_country' => $default_country,
                 'customer' => array(
                     'id' => (string)$customer_id,
-                    'firstName' => $order->get_billing_first_name(),
-                    'lastName' => $order->get_billing_last_name(),
+                    'first_name' => $order->get_billing_first_name(),
+                    'last_name' => $order->get_billing_last_name(),
                     'email' => $order->get_billing_email(),
-                    'phone' => $phone,
-                    'isNewCustomer' => $customer_orders_count === 0,
-                    'totalOrders' => $customer_orders_count,
-                    'totalSpent' => (float)$customer_total_spent,
+                    'phone' => $order->get_billing_phone(),
+                    'is_new_customer' => $customer_orders_count === 0,
+                    'total_orders' => $customer_orders_count,
+                    'total_spent' => (float)$customer_total_spent,
                 ),
-
-                'items' => $items,
-
+                'items' => $this->extract_items($order),
                 'totals' => array(
                     'subtotal' => (float)$order->get_subtotal(),
                     'discount' => (float)$order->get_total_discount(),
@@ -142,47 +154,40 @@ class Vocify_AI_Webhook_Service {
                     'tax' => (float)$order->get_total_tax(),
                     'total' => (float)$order->get_total(),
                 ),
-                'currency' => strtoupper($order->get_currency()),
-
-                'shippingAddress' => array(
-                    'firstName' => $order->get_shipping_first_name(),
-                    'lastName' => $order->get_shipping_last_name(),
+                'currency' => $order->get_currency(),
+                'shipping_address' => array(
+                    'first_name' => $order->get_shipping_first_name(),
+                    'last_name' => $order->get_shipping_last_name(),
                     'company' => $order->get_shipping_company(),
                     'address1' => $order->get_shipping_address_1(),
                     'address2' => $order->get_shipping_address_2(),
                     'city' => $order->get_shipping_city(),
                     'state' => $order->get_shipping_state(),
                     'zip' => $order->get_shipping_postcode(),
-                    'country' => strtoupper($order->get_shipping_country()),
-                    'phone' => $order->get_billing_phone(), // WC doesn't have separate shipping phone
+                    'country' => $order->get_shipping_country(),
+                    'phone' => $order->get_billing_phone(),
                 ),
-
-                'billingAddress' => array(
-                    'firstName' => $order->get_billing_first_name(),
-                    'lastName' => $order->get_billing_last_name(),
+                'billing_address' => array(
+                    'first_name' => $order->get_billing_first_name(),
+                    'last_name' => $order->get_billing_last_name(),
                     'company' => $order->get_billing_company(),
                     'address1' => $order->get_billing_address_1(),
                     'address2' => $order->get_billing_address_2(),
                     'city' => $order->get_billing_city(),
                     'state' => $order->get_billing_state(),
                     'zip' => $order->get_billing_postcode(),
-                    'country' => strtoupper($order->get_billing_country()),
+                    'country' => $order->get_billing_country(),
                     'phone' => $order->get_billing_phone(),
                 ),
-
-                'paymentMethod' => $order->get_payment_method(),
-                'paymentMethodTitle' => $order->get_payment_method_title(),
-                'transactionId' => $transaction_id,
-
-                'createdAt' => $order->get_date_created()->date('c'),
-                'updatedAt' => $order->get_date_modified()->date('c'),
-                'paidAt' => $paid_at_iso,
-
-                'customerNote' => $order->get_customer_note(),
-
-                'requiresShipping' => $order->needs_shipping_address(),
-                'taxIncluded' => wc_prices_include_tax(),
-
+                'payment_method' => $order->get_payment_method(),
+                'payment_method_title' => $order->get_payment_method_title(),
+                'transaction_id' => $order->get_transaction_id(),
+                'created_at' => $this->date_timestamp($order->get_date_created()),
+                'updated_at' => $this->date_timestamp($order->get_date_modified()),
+                'paid_at' => $this->date_timestamp($order->get_date_paid()),
+                'customer_note' => $order->get_customer_note(),
+                'needs_shipping' => $order->needs_shipping_address(),
+                'tax_included' => wc_prices_include_tax(),
                 'metadata' => array(
                     'woocommerceOrderKey' => $order->get_order_key(),
                     'woocommerceOrderId' => (string)$order->get_id(),
@@ -190,93 +195,68 @@ class Vocify_AI_Webhook_Service {
                 ),
             );
 
-            return $payload;
+            return $this->builder->build($raw);
         } catch (Exception $e) {
             wc_get_logger()->error(
-                'Failed to transform order: ' . $e->getMessage(),
+                'Vocify AI: Failed to transform order: ' . $e->getMessage(),
                 array('source' => 'vocify-ai', 'order_id' => $order->get_id())
             );
-            return false;
+            return null;
         }
     }
 
     /**
-     * Extract phone number with priority
+     * Extract order items into the normalized format.
      *
      * @param WC_Order $order
-     * @return string
+     * @return array
      */
-    private function extract_phone_number($order) {
-        // Get default country from billing or shipping address
-        $default_country = $order->get_billing_country();
-        if (empty($default_country)) {
-            $default_country = $order->get_shipping_country();
-        }
-        if (empty($default_country)) {
-            $default_country = 'US'; // Fallback
-        }
+    private function extract_items($order) {
+        $items = array();
 
-        // Priority: billing phone, shipping phone (if different)
-        $phones = array(
-            $order->get_billing_phone(),
-            // WooCommerce doesn't have separate shipping phone
-        );
+        foreach ($order->get_items() as $item) {
+            $product = $item->get_product();
+            $product_id = $product ? $product->get_id() : 0;
+            $image_id = $product ? $product->get_image_id() : 0;
+            $image_url = $image_id ? wp_get_attachment_url($image_id) : '';
 
-        foreach ($phones as $phone) {
-            if (!empty($phone)) {
-                return $this->format_phone_number($phone, $default_country);
+            if (!is_string($image_url)) {
+                $image_url = '';
             }
+
+            // Get product variations/attributes
+            $attributes = array();
+            if ($product && $product->is_type('variation')) {
+                $attributes = $product->get_variation_attributes();
+            }
+
+            $items[] = array(
+                'id' => (string)$product_id,
+                'name' => $item->get_name(),
+                'sku' => $product ? $product->get_sku() : '',
+                'quantity' => (int)$item->get_quantity(),
+                'price' => (float)$order->get_item_total($item, true), // Include tax
+                'total' => (float)$order->get_line_total($item, true), // Include tax
+                'image' => $image_url,
+                'attributes' => $attributes,
+            );
         }
 
-        return '';
+        return $items;
     }
 
     /**
-     * Format phone number to E.164 format
+     * Convert a WC_DateTime to a unix timestamp, or null when absent.
      *
-     * Uses libphonenumber-php if available, otherwise falls back to basic formatting
-     *
-     * @param string $phone
-     * @param string $default_country ISO country code (e.g., 'US', 'FR')
-     * @return string
+     * @param mixed $date
+     * @return int|null
      */
-    private function format_phone_number($phone, $default_country = 'US') {
-        if (empty($phone)) {
-            return '';
+    private function date_timestamp($date) {
+        if ($date instanceof WC_DateTime) {
+            return $date->getTimestamp();
         }
 
-        // Try using libphonenumber-php if available
-        if (class_exists('\libphonenumber\PhoneNumberUtil')) {
-            try {
-                $phone_util = \libphonenumber\PhoneNumberUtil::getInstance();
-                $phone_number = $phone_util->parse($phone, $default_country);
-
-                if ($phone_util->isValidNumber($phone_number)) {
-                    // Format as E.164 (international format with +)
-                    return $phone_util->format($phone_number, \libphonenumber\PhoneNumberFormat::E164);
-                }
-            } catch (\libphonenumber\NumberParseException $e) {
-                // Log parsing error in debug mode
-                if (get_option('vocify_debug_mode') === 'yes') {
-                    wc_get_logger()->warning(
-                        'Phone number parsing failed: ' . $e->getMessage() . ' - Phone: ' . $phone,
-                        array('source' => 'vocify-ai')
-                    );
-                }
-                // Fall through to basic formatting
-            }
-        }
-
-        // Fallback: Basic phone number cleanup
-        // Remove spaces, dashes, parentheses, dots
-        $phone = preg_replace('/[\s\-\(\)\.]/', '', $phone);
-
-        // Return as-is if it starts with +
-        if (!empty($phone) && substr($phone, 0, 1) === '+') {
-            return $phone;
-        }
-
-        return $phone;
+        return null;
     }
 
     /**
@@ -287,8 +267,8 @@ class Vocify_AI_Webhook_Service {
      */
     private function get_financial_status($order) {
         $status = $order->get_status();
-        $total_refunded = $order->get_total_refunded();
-        $total = $order->get_total();
+        $total_refunded = (float)$order->get_total_refunded();
+        $total = (float)$order->get_total();
 
         // Check for refunds
         if ($total_refunded > 0) {
@@ -353,12 +333,12 @@ class Vocify_AI_Webhook_Service {
     /**
      * Send webhook with retry logic
      *
-     * @param int $order_id
-     * @param array $payload
+     * @param int    $order_id
+     * @param array  $payload
      * @param string $api_key
      * @param string $webhook_url
-     * @param bool $debug_mode
-     * @return bool
+     * @param bool   $debug_mode
+     * @return array Result array (see self::result()).
      */
     private function send_webhook_with_retry($order_id, $payload, $api_key, $webhook_url, $debug_mode = false) {
         $last_error = '';
@@ -369,13 +349,11 @@ class Vocify_AI_Webhook_Service {
                 $result = $this->send_webhook($payload, $api_key, $webhook_url);
 
                 if ($result['success']) {
-                    // Log success
                     $this->log($order_id, 'success', $result['http_code'], json_encode($result['response']));
 
                     if ($debug_mode) {
                         wc_get_logger()->info(
-                            'Order sent successfully - Order #' . $payload['orderNumber'] .
-                            ' (JobID: ' . ($result['response']['jobId'] ?? 'N/A') . ')',
+                            'Vocify AI: Order #' . $payload['orderNumber'] . ' sent successfully',
                             array('source' => 'vocify-ai')
                         );
                     }
@@ -383,29 +361,31 @@ class Vocify_AI_Webhook_Service {
                     // Remove from failed queue if exists
                     $this->remove_from_failed_queue($order_id);
 
-                    return true;
+                    return $this->result(true, $result['http_code'], $result['response'], null, false, $payload);
                 }
 
                 $last_error = $result['error'];
                 $last_http_code = $result['http_code'];
 
-                // Don't retry client errors (4xx)
+                // Don't retry client errors (4xx) — configuration problem
                 if ($result['http_code'] >= 400 && $result['http_code'] < 500) {
                     $this->log($order_id, 'error', $result['http_code'], $last_error);
 
-                    wc_get_logger()->error(
-                        'Client error (no retry) - Order #' . $payload['orderNumber'] .
-                        ' - HTTP ' . $result['http_code'] . ': ' . $last_error,
-                        array('source' => 'vocify-ai')
-                    );
+                    if ($debug_mode) {
+                        wc_get_logger()->error(
+                            'Vocify AI: Client error (no retry) - Order #' . $payload['orderNumber'] .
+                            ' - HTTP ' . $result['http_code'] . ': ' . $last_error,
+                            array('source' => 'vocify-ai')
+                        );
+                    }
 
-                    return false;
+                    return $this->result(false, $result['http_code'], $result['response'], $last_error, false, $payload);
                 }
 
                 // Log retry attempt
                 if ($debug_mode) {
                     wc_get_logger()->warning(
-                        'Retry attempt ' . $attempt . '/' . self::MAX_RETRIES .
+                        'Vocify AI: Retry attempt ' . $attempt . '/' . self::MAX_RETRIES .
                         ' for order #' . $payload['orderNumber'] . ' - Error: ' . $last_error,
                         array('source' => 'vocify-ai')
                     );
@@ -429,37 +409,37 @@ class Vocify_AI_Webhook_Service {
         $this->log($order_id, 'failed', $last_http_code, $last_error);
         $this->add_to_failed_queue($order_id, $payload, $last_error);
 
-        wc_get_logger()->error(
-            'All retries failed for order #' . $payload['orderNumber'] .
-            ' - Last error: ' . $last_error,
-            array('source' => 'vocify-ai')
-        );
+        if ($debug_mode) {
+            wc_get_logger()->error(
+                'Vocify AI: All retries failed for order #' . $payload['orderNumber'] . ' - Last error: ' . $last_error,
+                array('source' => 'vocify-ai')
+            );
+        }
 
-        return false;
+        return $this->result(false, $last_http_code, null, $last_error, true, $payload);
     }
 
     /**
      * Send webhook to Vocify AI
      *
-     * @param array $payload
+     * The request body MUST be the exact string the HMAC signature was
+     * computed over — the platform verifies the signature against the raw
+     * body it receives.
+     *
+     * @param array  $payload
      * @param string $api_key
      * @param string $webhook_url
      * @return array
      */
-    private function send_webhook($payload, $api_key, $webhook_url) {
-        $store_domain = parse_url(get_site_url(), PHP_URL_HOST);
+    public function send_webhook($payload, $api_key, $webhook_url) {
+        $store_domain = $this->signer->extract_domain(get_site_url());
+        $signature_secret = get_option('vocify_signature_secret', '');
+
         $raw_body = json_encode($payload);
-        $signature = hash_hmac('sha256', $raw_body, $api_key);
+        $headers = $this->signer->build_headers($api_key, $store_domain, $raw_body, $signature_secret);
 
         $response = wp_remote_post($webhook_url, array(
-            'headers' => array(
-                'Content-Type' => 'application/json',
-                'X-Platform' => self::PLATFORM,
-                'X-API-Key' => $api_key,
-                'X-Domain' => $store_domain,
-                'X-Signature' => $signature,
-                'X-Timestamp' => gmdate('c'),
-            ),
+            'headers' => $headers,
             'body' => $raw_body,
             'timeout' => 30,
         ));
@@ -494,11 +474,83 @@ class Vocify_AI_Webhook_Service {
     }
 
     /**
+     * Retry the failed webhooks queue (WP-Cron).
+     *
+     * Processes a batch of queued payloads in a single cron tick. Successes
+     * and permanent (4xx) failures are removed from the queue; transient
+     * failures (5xx, network) stay queued with an incremented retry_count.
+     *
+     * @return int Number of successfully re-sent webhooks.
+     */
+    public function retry_failed_webhooks() {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'vocify_failed_webhooks';
+        $api_key = get_option('vocify_api_key');
+
+        if (empty($api_key)) {
+            return 0;
+        }
+
+        $webhook_url = get_option('vocify_webhook_url');
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, order_id, payload FROM {$table}
+             WHERE retry_count < %d
+             ORDER BY created_at ASC
+             LIMIT %d",
+            self::FAILED_QUEUE_MAX_RETRIES,
+            self::FAILED_QUEUE_BATCH
+        ));
+
+        $sent = 0;
+
+        foreach ($rows as $row) {
+            $payload = json_decode($row->payload, true);
+
+            if (!is_array($payload)) {
+                // Corrupt payload — drop it, it can never be sent.
+                $wpdb->delete($table, array('id' => $row->id), array('%d'));
+                continue;
+            }
+
+            $result = $this->send_webhook($payload, $api_key, $webhook_url);
+
+            if ($result['success']) {
+                $this->log((int)$row->order_id, 'success', $result['http_code'], json_encode($result['response']));
+                $wpdb->delete($table, array('id' => $row->id), array('%d'));
+                $sent++;
+                continue;
+            }
+
+            $http_code = $result['http_code'];
+
+            // Permanent failure — remove from queue, log as error.
+            if ($http_code >= 400 && $http_code < 500) {
+                $this->log((int)$row->order_id, 'error', $http_code, $result['error']);
+                $wpdb->delete($table, array('id' => $row->id), array('%d'));
+                continue;
+            }
+
+            // Transient failure — keep queued for the next tick.
+            $wpdb->query($wpdb->prepare(
+                "UPDATE {$table}
+                 SET error_message = %s, retry_count = retry_count + 1, last_retry_at = %s
+                 WHERE id = %d",
+                substr($result['error'], 0, 5000),
+                current_time('mysql'),
+                $row->id
+            ));
+        }
+
+        return $sent;
+    }
+
+    /**
      * Log webhook attempt
      *
-     * @param int $order_id
+     * @param int    $order_id
      * @param string $status
-     * @param int $http_code
+     * @param int    $http_code
      * @param string $message
      */
     private function log($order_id, $status, $http_code, $message) {
@@ -520,8 +572,8 @@ class Vocify_AI_Webhook_Service {
     /**
      * Add order to failed webhooks queue
      *
-     * @param int $order_id
-     * @param array $payload
+     * @param int    $order_id
+     * @param array  $payload
      * @param string $error_message
      */
     private function add_to_failed_queue($order_id, $payload, $error_message) {
@@ -571,6 +623,28 @@ class Vocify_AI_Webhook_Service {
             $wpdb->prefix . 'vocify_failed_webhooks',
             array('order_id' => $order_id),
             array('%d')
+        );
+    }
+
+    /**
+     * Build a standardized result array.
+     *
+     * @param bool        $success
+     * @param int         $http_code
+     * @param mixed       $response
+     * @param string|null $error
+     * @param bool        $retries_exhausted
+     * @param array|null  $payload
+     * @return array
+     */
+    private function result($success, $http_code, $response, $error, $retries_exhausted, $payload) {
+        return array(
+            'success' => (bool)$success,
+            'http_code' => (int)$http_code,
+            'response' => $response,
+            'error' => $error,
+            'retries_exhausted' => (bool)$retries_exhausted,
+            'payload' => $payload,
         );
     }
 }

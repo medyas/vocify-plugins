@@ -2,6 +2,9 @@
 /vendor/
 composer.lock
 
+# Testing
+.phpunit.result.cache
+
 # PrestaShop
 /.htaccess
 

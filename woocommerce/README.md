@@ -129,6 +129,7 @@ This method works without Composer but uses basic phone number formatting.
 3. Go to **Integrations** → **Create Integration** → **Select WooCommerce**
 4. Copy the generated API key (format: `vcf_live_XXXXXXXXXXXXXXXXXXXX`)
 5. **Important**: Save this key immediately - it's only shown once!
+6. If a **webhook signing secret** is shown for your API key, copy it into the plugin's **Webhook Signing Secret** field.
 
 ### Plugin Settings
 
@@ -137,6 +138,7 @@ Access configuration: **Vocify AI** menu in WordPress admin
 | Setting | Description | Required | Default |
 |---------|-------------|----------|---------|
 | **API Key** | Your Vocify AI API key from the dashboard | ✅ Yes | - |
+| **Webhook Signing Secret** | Signs each webhook request (`X-Signature`); shown once when you create your API key | Recommended | - |
 | **Enable Integration** | Turn the integration on/off | ✅ Yes | Disabled |
 | **Debug Mode** | Enable verbose logging for troubleshooting | No | Disabled |
 | **Webhook URL** | Vocify AI webhook endpoint | ✅ Yes | `https://app.vocify-ai.com/api/webhooks/ecommerce` |
@@ -145,9 +147,18 @@ Access configuration: **Vocify AI** menu in WordPress admin
 ### Test Connection
 
 After entering your API key:
+
 1. Click the **Test Connection** button
-2. If successful, you'll see: *"Connection successful! Your API key is valid."*
-3. If it fails, verify your API key and check your server's ability to make HTTPS requests
+2. The plugin checks the webhook URL health endpoint and validates your API key format locally (no fake payload is sent)
+3. If successful, you'll see: *"Connection successful! Your API key is valid."*
+4. If no signing secret is configured, you'll get a warning — requests still work, but the platform cannot verify their authenticity
+5. If it fails, verify your API key and check your server's ability to make HTTPS requests
+
+### Failed Webhook Retry
+
+- Failed webhooks are queued in the database (`{prefix}_vocify_failed_webhooks`)
+- A **WP-Cron job runs hourly** (`vocify_retry_failed_webhooks`) and automatically re-sends queued webhooks
+- 4xx errors are never retried (they indicate a configuration issue); 5xx and network errors are
 
 ---
 

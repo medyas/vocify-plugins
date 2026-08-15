@@ -2,6 +2,17 @@
 
 This document outlines the best practices for developing and maintaining the Vocify AI e-commerce CMS plugins.
 
+## ⚠️ Progress Protocol (READ FIRST)
+
+Work on the `vocify-v2` branch (hard gate: every commit on `vocify-v2`, pushed to origin). `PROGRESS.md` is the single source of truth for plugin status.
+
+**MANDATORY every session:**
+1. **Before starting**, read `PROGRESS.md`, find the current task, mark it `🔄 in progress`.
+2. **Before claiming ANY task done**, update `PROGRESS.md` in the same turn: tick the box, set status, add a one-line note (date + what changed + commit ref).
+3. Never report work complete without the matching `PROGRESS.md` edit.
+
+> **Note:** Plugins have no v2 spec rewrite — the webhook contract below is stable. The platform's intake is now synchronous (validate → upsert Order → insert first Attempt → 200), but this is invisible to plugins: keep POSTing the unified order to `/api/webhooks/ecommerce` exactly as documented here.
+
 ## Development Philosophy
 
 ### Core Principles

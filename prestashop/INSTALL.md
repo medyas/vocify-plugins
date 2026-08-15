@@ -403,10 +403,23 @@ Then reinstall via PrestaShop admin panel.
 When reporting bugs, include:
 1. PrestaShop version
 2. PHP version
-3. Module version (1.0.0)
+3. Module version (1.1.0)
 4. Installation method (Composer/Manual/FTP)
 5. Error message from logs
 6. Steps to reproduce
+
+---
+
+## Running Tests
+
+The module ships with a PHPUnit suite for the platform-agnostic core (signer, payload builder, payload validator):
+
+```bash
+composer install            # installs dev dependencies
+composer test               # runs phpunit (tests/)
+```
+
+The suite needs no PrestaShop installation — it loads the core classes directly.
 
 ---
 

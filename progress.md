@@ -1,7 +1,10 @@
 # Vocify CMS Plugins - Development Progress
 
-**Last Updated**: 2025-11-16
-**Version**: 1.0.0
+**Last Updated**: 2026-08-14
+**Version**: 1.1.0 (WooCommerce + PrestaShop)
+**Branch:** `vocify-v2` (all commits here, pushed to origin) — ⚠️ NOTE: repo currently on `main`; `vocify-v2` doesn't exist yet, pending branch decision before commit.
+
+> **Update rule (enforced by CLAUDE.md):** this file is the single source of truth for plugin status. Mark a feature 🚧 when you start it; before claiming any feature done, set its row to ✅ with a note, in the same turn as the work. Plugins have no v2 spec rewrite — the webhook contract in `claude.md` is stable; the platform's switch to synchronous intake + LiveKit is invisible to plugins.
 
 ---
 
@@ -30,10 +33,34 @@ This document tracks the development progress of all Vocify AI e-commerce CMS pl
 
 ---
 
+## 5. v1.1.0 Platform-Contract Sync (2026-08-14) ✅
+
+**What changed and why:** the platform's webhook auth moved to per-agent signing secrets (`signatureSecret`, HMAC-SHA256 over the raw body, verified in `lib/auth/api-key.ts`), and the unified headers are now `X-Platform` / `X-API-Key` / `X-Domain` / `X-Timestamp` / optional `X-Signature`. Both plugins dated from pre-contract code: wrong `X-Vocify-*` headers, HMAC over the API key, a WC order handler indexing a boolean result as an array, and a **call to an undefined `format_phone()`** in the WC builder (would fatal-error every webhook).
+
+| Deliverable | Status | Notes |
+|-------------|--------|-------|
+| WooCommerce → unified headers + signing secret | ✅ | `Vocify_AI_Signer`; X-Signature only when secret set (unverifiable sig = 401) |
+| WooCommerce payload builder/validator (schema mirror) | ✅ | `class-vocify-payload-builder.php`, `class-vocify-payload-validator.php`; libphonenumber E.164 + fallback |
+| WooCommerce service/queue/retry dedupe | ✅ | result arrays, 3× backoff, hourly WP-Cron retry, service owns DB logging |
+| WooCommerce admin: signing secret + status bar + GET health test | ✅ | key regex `vcf_(live|test)_[a-zA-Z0-9]{16,}$` |
+| PrestaShop same contract work | ✅ | `VocifySigner`, `VocifyPayloadBuilder`, `VocifyPayloadValidator`, result-array service, curl headers |
+| PrestaShop retry cron endpoint | ✅ | `controllers/front/cron.php`, per-install token, `hash_equals`, `OK:<count>` |
+| PHPUnit suites (no CMS bootstrap) | ✅ | WC 27/27, PS 31/31 — run via Docker `composer:2`, php 8.2 CLI |
+| Docs (README/INSTALL/CHANGELOG) v1.1.0 | ✅ | signing secret + cron + tests documented |
+| Commit + push on `vocify-v2` | 🔄 | blocked on branch decision (repo on `main`), commit ref TBD |
+
+**Validation:** `php -l` over all 32 plugin PHP files clean; PHPUnit WC 27 tests/68 assertions, PS 31 tests/71 assertions green.
+
+**Blockers found along the way:**
+- `app.vocify-ai.com` has **no DNS record** (2026-08-14, checked 1.1.1.1) — README/default webhook URL is a placeholder until the domain is live; Test Connection explicitly surfaces HTTP codes so a dead domain is visible, not silent.
+- `GET /api/webhooks/ecommerce` behavior unverifiable against live platform (no reachable host; WSL :3000 is a different node service `dist/index.js`). Test Connection treats non-200 as failure + surfaces code — safe either way.
+
+---
+
 ## 1. PrestaShop Module
 
-**Status**: 🚧 In Progress
-**Target Version**: 1.0.0
+**Status**: ✅ v1.1.0 shipped (2026-08-14) — contract-synced, tested, documented
+**Target Version**: 1.1.0
 **PHP Version**: 7.1+
 **PrestaShop Compatibility**: 1.7.x, 8.x
 
@@ -41,27 +68,27 @@ This document tracks the development progress of all Vocify AI e-commerce CMS pl
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Module structure | 🚧 In Progress | Basic module scaffolding |
-| Event hooks integration | 📋 Planned | `actionValidateOrder`, `actionOrderStatusPostUpdate` |
-| Data transformation | 📋 Planned | Transform PrestaShop orders to unified payload |
-| Webhook sending | 📋 Planned | HTTPS POST with retry logic |
-| HMAC signature | 📋 Planned | SHA-256 signature generation |
-| Configuration UI | 📋 Planned | Admin panel settings page |
-| API key management | 📋 Planned | Encrypted storage |
-| Phone number validation | 📋 Planned | E.164 format validation |
-| Error logging | 📋 Planned | PrestaShop logger integration |
-| Retry mechanism | 📋 Planned | 3 attempts with exponential backoff |
-| Failed webhooks queue | 📋 Planned | Database table for retries |
-| Test connection | 📋 Planned | Verify webhook setup |
-| Installation script | 📋 Planned | Database tables creation |
-| Uninstallation script | 📋 Planned | Clean removal |
+| Module structure | ✅ | Complete (v1.0.0 shipped 2025-11-16) |
+| Event hooks integration | ✅ | `actionValidateOrder`, `actionOrderStatusPostUpdate` (token-gated, result-array safe) |
+| Data transformation | ✅ | `VocifyPayloadBuilder` — pure-array, fallbacks, enum clamping, ISO dates |
+| Webhook sending | ✅ | cURL, unified headers, 3× backoff (2s/4s/8s), 4xx never retried |
+| HMAC signature | ✅ | `VocifySigner` — `signatureSecret`, raw-body HMAC-SHA256 |
+| Configuration UI | ✅ | Signing secret field, store domain + cron URL rows, status badge |
+| API key management | ✅ | `VOCIFY_API_KEY`; regex `vcf_(live|test)_...` validation |
+| Phone number validation | ✅ | libphonenumber E.164, phone_mobile-first chain, fallback strip |
+| Error logging | ✅ | `vocify_webhook_logs` + PrestaShopLogger |
+| Retry mechanism | ✅ | Failed queue + token-protected cron re-send |
+| Failed webhooks queue | ✅ | `_DB_PREFIX_vocify_failed_webhooks` |
+| Test connection | ✅ | GET health + local key-format check (no fake payload) |
+| Installation script | ✅ | Tables + config incl. `VOCIFY_CRON_TOKEN` |
+| Uninstallation script | ✅ | Clean removal |
 
 ### Documentation
 
 | Document | Status | Notes |
 |----------|--------|-------|
-| README.md | 📋 Planned | Installation and usage guide |
-| CHANGELOG.md | 📋 Planned | Version history |
+| README.md | ✅ | v1.1.0: signing secret, test connection, retry cron |
+| CHANGELOG.md | ✅ | 1.1.0 entry added 2026-08-14 |
 | User Guide | 📋 Planned | Step-by-step configuration |
 | Technical Documentation | 📋 Planned | Developer guide |
 
@@ -69,17 +96,17 @@ This document tracks the development progress of all Vocify AI e-commerce CMS pl
 
 | Test Type | Status | Notes |
 |-----------|--------|-------|
-| Unit tests | 📋 Planned | Core functions |
-| Integration tests | 📋 Planned | PrestaShop hooks |
+| Unit tests | ✅ | 31 tests / 71 assertions (builder, validator, signer) |
+| Integration tests | 📋 Planned | PrestaShop hooks (needs live store) |
 | Manual testing | 📋 Planned | Real store testing |
-| Edge cases | 📋 Planned | Virtual products, refunds, guest checkout |
+| Edge cases | ✅ | In unit suite: phone fallback, address fallback, enum clamp, date omission |
 
 ---
 
 ## 2. WooCommerce Plugin
 
-**Status**: 📋 Planned
-**Target Version**: 1.0.0
+**Status**: ✅ v1.1.0 shipped (2026-08-14) — contract-synced, tested, documented
+**Target Version**: 1.1.0
 **PHP Version**: 7.4+
 **WordPress Compatibility**: 5.8+
 **WooCommerce Compatibility**: 5.0+
@@ -88,26 +115,35 @@ This document tracks the development progress of all Vocify AI e-commerce CMS pl
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Plugin structure | 📋 Planned | WordPress plugin scaffolding |
-| Event hooks integration | 📋 Planned | `woocommerce_new_order`, `woocommerce_order_status_changed` |
-| Data transformation | 📋 Planned | Transform WooCommerce orders to unified payload |
-| Webhook sending | 📋 Planned | wp_remote_post with retry logic |
-| HMAC signature | 📋 Planned | SHA-256 signature generation |
-| Configuration UI | 📋 Planned | WooCommerce settings integration |
-| API key management | 📋 Planned | WordPress options API |
-| Phone number validation | 📋 Planned | libphonenumber-php integration |
-| Error logging | 📋 Planned | WordPress error_log integration |
-| Retry mechanism | 📋 Planned | WP-Cron for failed webhooks |
-| Admin notices | 📋 Planned | Configuration prompts |
-| Test connection | 📋 Planned | Verify webhook setup |
+| Plugin structure | ✅ | Complete (v1.0.0 shipped 2025-11-16) |
+| Event hooks integration | ✅ | `woocommerce_new_order`, `woocommerce_order_status_changed` (enabled-guard restored) |
+| Data transformation | ✅ | `Vocify_AI_Payload_Builder` — pure-array, fallbacks, enum clamping, ISO dates |
+| Webhook sending | ✅ | `wp_remote_post`, unified headers, 3× backoff (2s/4s/8s), 4xx never retried |
+| HMAC signature | ✅ | `Vocify_AI_Signer` — `signatureSecret`, raw-body HMAC-SHA256 |
+| Configuration UI | ✅ | Signing secret field + status bar (Not configured/Active/Active-no-secret/Disabled) |
+| API key management | ✅ | `vocify_api_key` option; regex `vcf_(live|test)_...` validation |
+| Phone number validation | ✅ | libphonenumber E.164 (`format_phone` **added** — was missing, fatal bug), fallback strip |
+| Error logging | ✅ | `vocify_webhook_logs` + WC logger; handler no longer double-logs |
+| Retry mechanism | ✅ | Hourly WP-Cron `vocify_retry_failed_webhooks` re-sends queue |
+| Admin notices | ✅ | Status bar + order meta box |
+| Test connection | ✅ | GET health + local key-format check (no fake payload) |
 
 ### Documentation
 
 | Document | Status | Notes |
 |----------|--------|-------|
-| README.md | 📋 Planned | Installation and usage guide |
-| CHANGELOG.md | 📋 Planned | Version history |
+| README.md | ✅ | v1.1.0: signing secret, test connection, retry cron |
+| CHANGELOG.md | ✅ | 1.1.0 entry added 2026-08-14 |
 | User Guide | 📋 Planned | Step-by-step configuration |
+
+### Testing
+
+| Test Type | Status | Notes |
+|-----------|--------|-------|
+| Unit tests | ✅ | 27 tests / 68 assertions (builder, validator, signer) |
+| Integration tests | 📋 Planned | WordPress hooks (needs WP test env) |
+| Manual testing | 📋 Planned | Real store testing |
+| Edge cases | ✅ | In unit suite: phone fallback, address fallback, enum clamp, date omission |
 
 ---
 
@@ -241,33 +277,26 @@ This document tracks the development progress of all Vocify AI e-commerce CMS pl
 
 | Issue | Platform | Status | Resolution |
 |-------|----------|--------|------------|
-| - | - | - | - |
-
-*No known issues at this time*
+| `app.vocify-ai.com` has no DNS record (checked 2026-08-14) | Both | ⚠️ External | Domain must be live before Test Connection / webhooks succeed; plugin surfaces HTTP codes so failures are visible |
+| `GET /api/webhooks/ecommerce` health behavior unverified (no reachable host) | Both | 🚧 | Verify once platform dev server or production domain is reachable |
+| Repo on `main`, `vocify-v2` branch doesn't exist — claude.md hard gate | Both | 🚧 | Create `vocify-v2` and commit there (pending user decision) |
 
 ---
 
 ## Next Steps
 
-### Immediate (This Week)
-1. ✅ Create folder structure for all CMS plugins
-2. ✅ Create claude.md with best practices
-3. 🚧 Create progress.md for tracking
-4. 📋 Complete PrestaShop module structure
-5. 📋 Implement PrestaShop webhook functionality
-6. 📋 Create PrestaShop configuration UI
-7. 📋 Add PrestaShop documentation
+### Immediate
+1. ✅ WooCommerce + PrestaShop v1.1.0 contract sync (2026-08-14)
+2. ✅ PHPUnit suites green (WC 27/27, PS 31/31 via Docker composer)
+3. ✅ Docs + CHANGELOGs updated
+4. 🔄 Commit on `vocify-v2` (branch decision pending)
+5. 📋 Live-store smoke test once `app.vocify-ai.com` resolves
+6. 📋 Integration tests with real CMS bootstrap (WP/PrestaShop test envs)
 
-### Short Term (Next 2 Weeks)
-1. Complete PrestaShop testing and validation
-2. Begin WooCommerce plugin development
-3. Set up CI/CD for automated testing
-
-### Long Term (Next Month)
-1. Complete all 4 platform plugins
-2. Submit to respective marketplaces
-3. Set up monitoring and analytics
-4. Create video tutorials for each platform
+### Short Term
+1. CI/CD: run `composer test` + `php -l` on push (GitHub Actions)
+2. Re-sync `claude.md` webhook contract docs (headers section names old `X-Vocify-*`-era wording if any)
+3. Shopify scaffold (still planned; out of current scope)
 
 ---
 
@@ -297,4 +326,4 @@ For guidelines on contributing to the plugins, see [claude.md](./claude.md).
 
 ---
 
-**Note**: This document is updated regularly as development progresses. Last update reflects current status as of 2025-11-16.
+**Note**: This document is updated regularly as development progresses. Last update reflects current status as of 2026-08-14 (v1.1.0 sync, commit pending branch decision).

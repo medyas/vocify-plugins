@@ -19,6 +19,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-08-14
+
+### Changed
+
+- **Webhook contract alignment**: Requests now use the platform's unified headers (`X-Platform`, `X-API-Key`, `X-Domain`, `X-Timestamp`) instead of the old `X-Vocify-*` headers.
+- **Signing secret**: `X-Signature` is now HMAC-SHA256 over the exact raw JSON body using the per-agent **webhook signing secret** (`signatureSecret`) from the dashboard — not the API key. The header is only sent when a secret is configured.
+- **Test connection**: No longer posts a fake payload; performs a GET health check on the webhook URL, validates the API key format (`vcf_live_...`/`vcf_test_...`), and warns when no signing secret is configured.
+- **Local validation**: New `VocifyPayloadValidator` mirrors the platform's Zod schema so invalid payloads fail fast with readable errors.
+- **Automatic retry**: New token-protected front controller cron (`module=vocifyai&fc=module&controller=cron&token=...`) re-sends previously failed webhooks; the cron URL is shown on the config page.
+- Phone priority follows the documented chain: customer mobile → customer phone → delivery mobile/phone → invoice mobile/phone.
+
+### Added
+
+- `classes/VocifySigner.php` — HMAC signing + header building (unit-testable, no PrestaShop bootstrap).
+- `classes/VocifyPayloadBuilder.php` — pure-array payload mapping (address/phone fallbacks, enum clamping, ISO dates).
+- `classes/VocifyPayloadValidator.php` — schema mirror with human-readable errors.
+- `controllers/front/cron.php` — retry cron endpoint protected by a per-install token (`hash_equals` comparison, 403 on mismatch).
+- Settings fields for the webhook signing secret; config page now shows store domain and retry cron URL.
+- PHPUnit test suite (`tests/`, `phpunit.xml`, `composer.json` dev deps) — 31 tests covering builder, validator, signer.
+
+### Fixed
+
+- **CRITICAL**: `formatPhone()` E.164 conversion now emitted even when libphonenumber is absent (separator-strip fallback was missing).
+- `transformOrder()` no longer returns `false` on missing data — callers receive the structured result array from `sendOrder()`.
+- Duplicate logging: the webhook service owns all `vocify_webhook_logs`/queue persistence.
+- PrestaShop phone chain now uses `phone_mobile` first, matching the documented priority.
+
+---
+
 ## [1.0.0] - 2025-11-16
 
 ### Added (Enhancement)
@@ -113,5 +142,6 @@ This project uses [Semantic Versioning](https://semver.org/):
 
 ---
 
-[Unreleased]: https://github.com/vocify-ai/prestashop-module/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/vocify-ai/prestashop-module/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/vocify-ai/prestashop-module/releases/tag/v1.1.0
 [1.0.0]: https://github.com/vocify-ai/prestashop-module/releases/tag/v1.0.0

@@ -7,6 +7,7 @@
  * @author Vocify AI
  * @copyright 2025 Vocify AI
  * @license MIT License
+ * @version 1.1.0
  */
 
 if (!defined('_PS_VERSION_')) {
@@ -17,12 +18,45 @@ class VocifyWebhookService
 {
     const PLATFORM = 'PRESTASHOP';
     const MAX_RETRIES = 3;
+    const FAILED_QUEUE_MAX_RETRIES = 5;
+    const FAILED_QUEUE_BATCH = 20;
+
+    /**
+     * Payload builder instance
+     *
+     * @var VocifyPayloadBuilder
+     */
+    private $builder;
+
+    /**
+     * Payload validator instance
+     *
+     * @var VocifyPayloadValidator
+     */
+    private $validator;
+
+    /**
+     * Signer instance
+     *
+     * @var VocifySigner
+     */
+    private $signer;
+
+    /**
+     * Constructor
+     */
+    public function __construct()
+    {
+        $this->builder = new VocifyPayloadBuilder();
+        $this->validator = new VocifyPayloadValidator();
+        $this->signer = new VocifySigner();
+    }
 
     /**
      * Send order to Vocify AI
      *
      * @param Order $order
-     * @return bool
+     * @return array Result: { success, http_code, response, error, retries_exhausted, payload }
      */
     public function sendOrder($order)
     {
@@ -32,15 +66,37 @@ class VocifyWebhookService
 
         if (empty($apiKey)) {
             $this->log($order->id, 'error', 0, 'API key not configured');
-            return false;
+            return $this->result(false, 0, null, 'API key not configured', false, null);
         }
 
         // Transform order to unified payload
         $payload = $this->transformOrder($order);
 
         if (!$payload) {
-            $this->log($order->id, 'error', 0, 'Failed to transform order data');
-            return false;
+            $message = 'Failed to transform order data';
+            $this->log($order->id, 'error', 0, $message);
+            return $this->result(false, 0, null, $message, false, null);
+        }
+
+        // Fail fast on payloads the platform would reject with 400 — a local
+        // validation error is a configuration/data problem, not transient.
+        $errors = $this->validator->validate($payload);
+
+        if (count($errors) > 0) {
+            $message = 'Payload validation failed: ' . implode('; ', array_slice($errors, 0, 5));
+            $this->log($order->id, 'error', 0, $message);
+
+            if ($debugMode) {
+                PrestaShopLogger::addLog(
+                    'Vocify AI: Payload invalid for order #' . $order->reference . ' - ' . $message,
+                    3,
+                    null,
+                    'Order',
+                    $order->id
+                );
+            }
+
+            return $this->result(false, 400, null, $message, false, $payload);
         }
 
         // Send webhook with retry logic
@@ -51,9 +107,9 @@ class VocifyWebhookService
      * Transform PrestaShop order to unified payload format
      *
      * @param Order $order
-     * @return array|false
+     * @return array|null
      */
-    private function transformOrder($order)
+    public function transformOrder($order)
     {
         try {
             $context = Context::getContext();
@@ -63,108 +119,49 @@ class VocifyWebhookService
             $currency = new Currency($order->id_currency);
             $orderState = new OrderState($order->current_state, $context->language->id);
 
-            // Get order products
-            $products = $order->getProducts();
-            $items = array();
+            // Phone candidates in priority order (first non-empty wins).
+            $phones = array(
+                isset($customer->phone_mobile) ? $customer->phone_mobile : '',
+                isset($customer->phone) ? $customer->phone : '',
+                $addressDelivery->phone_mobile,
+                $addressDelivery->phone,
+                $addressInvoice->phone_mobile,
+                $addressInvoice->phone,
+            );
 
-            foreach ($products as $product) {
-                $imageLink = '';
-                if (!empty($product['id_image'])) {
-                    $imageLink = $context->link->getImageLink(
-                        $product['link_rewrite'],
-                        $product['id_image'],
-                        ImageType::getFormattedName('large')
-                    );
-                }
-
-                $items[] = array(
-                    'id' => (string)$product['product_id'],
-                    'name' => $product['product_name'],
-                    'sku' => $product['product_reference'],
-                    'quantity' => (int)$product['product_quantity'],
-                    'price' => (float)$product['unit_price_tax_incl'],
-                    'total' => (float)$product['total_price_tax_incl'],
-                    'image' => $imageLink,
-                );
+            // Default country from the delivery address, falling back to the
+            // invoice address, then the shop's default country.
+            $defaultCountry = $this->countryIso($addressDelivery->id_country);
+            if (empty($defaultCountry)) {
+                $defaultCountry = $this->countryIso($addressInvoice->id_country);
+            }
+            if (empty($defaultCountry)) {
+                $defaultCountry = $this->countryIso((int)Configuration::get('PS_COUNTRY_DEFAULT'));
+            }
+            if (empty($defaultCountry)) {
+                $defaultCountry = 'US';
             }
 
-            // Extract phone number (priority order)
-            $phone = $this->extractPhoneNumber($customer, $addressDelivery, $addressInvoice);
-
-            if (empty($phone)) {
-                PrestaShopLogger::addLog(
-                    'Vocify AI: No phone number found for order #' . $order->reference,
-                    2,
-                    null,
-                    'Order',
-                    $order->id
-                );
-            }
-
-            // Get country ISO code
-            $deliveryCountry = new Country($addressDelivery->id_country);
-            $invoiceCountry = new Country($addressInvoice->id_country);
-
-            // Get state/province
-            $deliveryState = '';
-            if ($addressDelivery->id_state) {
-                $state = new State($addressDelivery->id_state);
-                $deliveryState = $state->iso_code;
-            }
-
-            $invoiceState = '';
-            if ($addressInvoice->id_state) {
-                $state = new State($addressInvoice->id_state);
-                $invoiceState = $state->iso_code;
-            }
-
-            // Get payment transaction ID
-            $transactionId = '';
-            $orderPayments = $order->getOrderPaymentCollection();
-            if ($orderPayments && count($orderPayments) > 0) {
-                foreach ($orderPayments as $payment) {
-                    if (!empty($payment->transaction_id)) {
-                        $transactionId = $payment->transaction_id;
-                        break;
-                    }
-                }
-            }
-
-            // Determine financial status based on payment and order state
-            $financialStatus = $this->getFinancialStatus($order);
-
-            // Determine fulfillment status
-            $fulfillmentStatus = $this->getFulfillmentStatus($order);
-
-            // Get paid date
-            $paidAt = null;
-            if ($orderPayments && count($orderPayments) > 0) {
-                foreach ($orderPayments as $payment) {
-                    if (!empty($payment->date_add)) {
-                        $paidAt = date('c', strtotime($payment->date_add));
-                        break;
-                    }
-                }
-            }
-
-            // Build unified payload
-            $payload = array(
-                'orderId' => (string)$order->id,
-                'orderNumber' => $order->reference,
-                'status' => $orderState->name,
-                'financialStatus' => $financialStatus,
-                'fulfillmentStatus' => $fulfillmentStatus,
-
+            // Raw data map — consumed by the platform-agnostic payload builder.
+            $raw = array(
+                'order_id' => (string)$order->id,
+                'order_number' => $order->reference,
+                'order_key' => $order->reference,
+                'status' => isset($orderState->slug) && $orderState->slug !== ''
+                    ? $orderState->slug
+                    : $orderState->name,
+                'financial_status' => $this->getFinancialStatus($order),
+                'fulfillment_status' => $this->getFulfillmentStatus($order),
+                'default_country' => $defaultCountry,
+                'phones' => $phones,
                 'customer' => array(
                     'id' => (string)$customer->id,
-                    'firstName' => $customer->firstname,
-                    'lastName' => $customer->lastname,
+                    'first_name' => $customer->firstname,
+                    'last_name' => $customer->lastname,
                     'email' => $customer->email,
-                    'phone' => $phone,
+                    'mobile_phone' => isset($customer->phone_mobile) ? $customer->phone_mobile : '',
                 ),
-
-                'items' => $items,
-
+                'items' => $this->extractItems($order, $context),
                 'totals' => array(
                     'subtotal' => (float)$order->total_products,
                     'discount' => (float)$order->total_discounts,
@@ -172,44 +169,38 @@ class VocifyWebhookService
                     'tax' => (float)($order->total_paid_tax_incl - $order->total_paid_tax_excl),
                     'total' => (float)$order->total_paid,
                 ),
-                'currency' => strtoupper($currency->iso_code),
-
-                'shippingAddress' => array(
-                    'firstName' => $addressDelivery->firstname,
-                    'lastName' => $addressDelivery->lastname,
+                'currency' => isset($currency->iso_code) ? $currency->iso_code : '',
+                'shipping_address' => array(
+                    'first_name' => $addressDelivery->firstname,
+                    'last_name' => $addressDelivery->lastname,
                     'company' => $addressDelivery->company,
                     'address1' => $addressDelivery->address1,
                     'address2' => $addressDelivery->address2,
                     'city' => $addressDelivery->city,
-                    'state' => $deliveryState,
+                    'state' => $this->stateIso($addressDelivery->id_state),
                     'zip' => $addressDelivery->postcode,
-                    'country' => strtoupper($deliveryCountry->iso_code),
-                    'phone' => $addressDelivery->phone_mobile ?: $addressDelivery->phone,
+                    'country' => $this->countryIso($addressDelivery->id_country),
+                    'phone' => !empty($addressDelivery->phone_mobile) ? $addressDelivery->phone_mobile : $addressDelivery->phone,
                 ),
-
-                'billingAddress' => array(
-                    'firstName' => $addressInvoice->firstname,
-                    'lastName' => $addressInvoice->lastname,
+                'billing_address' => array(
+                    'first_name' => $addressInvoice->firstname,
+                    'last_name' => $addressInvoice->lastname,
                     'company' => $addressInvoice->company,
                     'address1' => $addressInvoice->address1,
                     'address2' => $addressInvoice->address2,
                     'city' => $addressInvoice->city,
-                    'state' => $invoiceState,
+                    'state' => $this->stateIso($addressInvoice->id_state),
                     'zip' => $addressInvoice->postcode,
-                    'country' => strtoupper($invoiceCountry->iso_code),
-                    'phone' => $addressInvoice->phone_mobile ?: $addressInvoice->phone,
+                    'country' => $this->countryIso($addressInvoice->id_country),
+                    'phone' => !empty($addressInvoice->phone_mobile) ? $addressInvoice->phone_mobile : $addressInvoice->phone,
                 ),
-
-                'paymentMethod' => $order->payment,
-                'transactionId' => $transactionId,
-
-                'createdAt' => date('c', strtotime($order->date_add)),
-                'updatedAt' => date('c', strtotime($order->date_upd)),
-                'paidAt' => $paidAt,
-
-                'requiresShipping' => true,
-                'taxIncluded' => Group::getPriceDisplayMethod($customer->id_default_group) == PS_TAX_INC,
-
+                'payment_method' => $order->payment,
+                'transaction_id' => $this->extractTransactionId($order),
+                'created_at' => strtotime($order->date_add),
+                'updated_at' => strtotime($order->date_upd),
+                'paid_at' => $this->extractPaidAt($order),
+                'needs_shipping' => (int)$order->id_carrier > 0,
+                'tax_included' => Group::getPriceDisplayMethod($customer->id_default_group) == PS_TAX_INC,
                 'metadata' => array(
                     'prestashopOrderReference' => $order->reference,
                     'prestashopCurrentState' => (string)$order->current_state,
@@ -218,49 +209,105 @@ class VocifyWebhookService
                 ),
             );
 
-            return $payload;
+            return $this->builder->build($raw);
         } catch (Exception $e) {
             PrestaShopLogger::addLog(
                 'Vocify AI: Failed to transform order - ' . $e->getMessage(),
                 3,
                 null,
                 'Order',
-                $order->id
+                isset($order->id) ? $order->id : 0
             );
-            return false;
+            return null;
         }
     }
 
     /**
-     * Extract phone number with priority
+     * Extract order items into the normalized format.
      *
-     * @param Customer $customer
-     * @param Address $addressDelivery
-     * @param Address $addressInvoice
-     * @return string
+     * @param Order   $order
+     * @param Context $context
+     * @return array
      */
-    private function extractPhoneNumber($customer, $addressDelivery, $addressInvoice)
+    private function extractItems($order, $context)
     {
-        // Get default country from delivery address for phone validation
-        $defaultCountry = 'US'; // Fallback
-        if ($addressDelivery->id_country) {
-            $country = new Country($addressDelivery->id_country);
-            $defaultCountry = $country->iso_code;
+        $items = array();
+        $products = $order->getProducts();
+
+        foreach ($products as $product) {
+            $imageLink = '';
+
+            if (!empty($product['id_image']) && isset($context->link)) {
+                $imageLink = $context->link->getImageLink(
+                    $product['link_rewrite'],
+                    $product['id_image'],
+                    ImageType::getFormattedName('large')
+                );
+            }
+
+            $items[] = array(
+                'id' => (string)$product['product_id'],
+                'name' => $product['product_name'],
+                'sku' => $product['product_reference'],
+                'quantity' => (int)$product['product_quantity'],
+                'price' => (float)$product['unit_price_tax_incl'],
+                'total' => (float)$product['total_price_tax_incl'],
+                'image' => $imageLink,
+            );
         }
 
-        // Priority: customer mobile, customer phone, delivery mobile, delivery phone, invoice mobile, invoice phone
-        $phones = array(
-            isset($customer->phone_mobile) ? $customer->phone_mobile : '',
-            isset($customer->phone) ? $customer->phone : '',
-            $addressDelivery->phone_mobile,
-            $addressDelivery->phone,
-            $addressInvoice->phone_mobile,
-            $addressInvoice->phone,
-        );
+        return $items;
+    }
 
-        foreach ($phones as $phone) {
-            if (!empty($phone)) {
-                return $this->formatPhoneNumber($phone, $defaultCountry);
+    /**
+     * Resolve a country ISO code from a country ID.
+     *
+     * @param int $idCountry
+     * @return string
+     */
+    private function countryIso($idCountry)
+    {
+        if (empty($idCountry)) {
+            return '';
+        }
+
+        $country = new Country((int)$idCountry);
+
+        return isset($country->iso_code) && $country->iso_code !== null ? (string)$country->iso_code : '';
+    }
+
+    /**
+     * Resolve a state ISO code from a state ID.
+     *
+     * @param int $idState
+     * @return string
+     */
+    private function stateIso($idState)
+    {
+        if (empty($idState)) {
+            return '';
+        }
+
+        $state = new State((int)$idState);
+
+        return isset($state->iso_code) && $state->iso_code !== null ? (string)$state->iso_code : '';
+    }
+
+    /**
+     * Extract the first non-empty payment transaction ID.
+     *
+     * @param Order $order
+     * @return string
+     */
+    private function extractTransactionId($order)
+    {
+        $orderPayments = $order->getOrderPaymentCollection();
+
+        if ($orderPayments && count($orderPayments) > 0) {
+            foreach ($orderPayments as $payment) {
+                if (!empty($payment->transaction_id)) {
+                    return (string)$payment->transaction_id;
+                }
             }
         }
 
@@ -268,66 +315,38 @@ class VocifyWebhookService
     }
 
     /**
-     * Format phone number to E.164 format
+     * Extract the paid date as a unix timestamp, or null when unpaid.
      *
-     * Uses libphonenumber-php if available, otherwise falls back to basic formatting
-     *
-     * @param string $phone
-     * @param string $defaultCountry ISO country code (e.g., 'US', 'FR')
-     * @return string
+     * @param Order $order
+     * @return int|null
      */
-    private function formatPhoneNumber($phone, $defaultCountry = 'US')
+    private function extractPaidAt($order)
     {
-        if (empty($phone)) {
-            return '';
-        }
+        $orderPayments = $order->getOrderPaymentCollection();
 
-        // Try using libphonenumber-php if available
-        if (class_exists('\libphonenumber\PhoneNumberUtil')) {
-            try {
-                $phoneUtil = \libphonenumber\PhoneNumberUtil::getInstance();
-                $phoneNumber = $phoneUtil->parse($phone, $defaultCountry);
-
-                if ($phoneUtil->isValidNumber($phoneNumber)) {
-                    // Format as E.164 (international format with +)
-                    return $phoneUtil->format($phoneNumber, \libphonenumber\PhoneNumberFormat::E164);
+        if ($orderPayments && count($orderPayments) > 0) {
+            foreach ($orderPayments as $payment) {
+                if (!empty($payment->date_add)) {
+                    $timestamp = strtotime($payment->date_add);
+                    if ($timestamp !== false) {
+                        return $timestamp;
+                    }
                 }
-            } catch (\libphonenumber\NumberParseException $e) {
-                // Log parsing error in debug mode
-                if (Configuration::get('VOCIFY_DEBUG_MODE')) {
-                    PrestaShopLogger::addLog(
-                        'Vocify AI: Phone number parsing failed - ' . $e->getMessage() . ' - Phone: ' . $phone,
-                        2
-                    );
-                }
-                // Fall through to basic formatting
             }
         }
 
-        // Fallback: Basic phone number cleanup
-        // Remove spaces, dashes, parentheses, dots
-        $phone = preg_replace('/[\s\-\(\)\.]/', '', $phone);
-
-        // Ensure it starts with + if it looks like E.164
-        // PHP 7.1 compatible check (str_starts_with requires PHP 8.0+)
-        if (!empty($phone) && substr($phone, 0, 1) !== '+') {
-            // If it's a number and doesn't start with +, it might need country code
-            // Without libphonenumber, we can't reliably add country code
-            return $phone;
-        }
-
-        return $phone;
+        return null;
     }
 
     /**
      * Send webhook with retry logic
      *
-     * @param int $orderId
-     * @param array $payload
+     * @param int    $orderId
+     * @param array  $payload
      * @param string $apiKey
      * @param string $webhookUrl
-     * @param bool $debugMode
-     * @return bool
+     * @param bool   $debugMode
+     * @return array Result array (see self::result()).
      */
     private function sendWebhookWithRetry($orderId, $payload, $apiKey, $webhookUrl, $debugMode = false)
     {
@@ -339,13 +358,11 @@ class VocifyWebhookService
                 $result = $this->sendWebhook($payload, $apiKey, $webhookUrl);
 
                 if ($result['success']) {
-                    // Log success
                     $this->log($orderId, 'success', $result['http_code'], json_encode($result['response']));
 
                     if ($debugMode) {
                         PrestaShopLogger::addLog(
-                            'Vocify AI: Order sent successfully - Order #' . $payload['orderNumber'] .
-                            ' (JobID: ' . ($result['response']['jobId'] ?? 'N/A') . ')',
+                            'Vocify AI: Order #' . $payload['orderNumber'] . ' sent successfully',
                             1,
                             null,
                             'Order',
@@ -356,26 +373,28 @@ class VocifyWebhookService
                     // Remove from failed queue if exists
                     $this->removeFromFailedQueue($orderId);
 
-                    return true;
+                    return $this->result(true, $result['http_code'], $result['response'], null, false, $payload);
                 }
 
                 $lastError = $result['error'];
                 $lastHttpCode = $result['http_code'];
 
-                // Don't retry client errors (4xx)
+                // Don't retry client errors (4xx) — configuration problem
                 if ($result['http_code'] >= 400 && $result['http_code'] < 500) {
                     $this->log($orderId, 'error', $result['http_code'], $lastError);
 
-                    PrestaShopLogger::addLog(
-                        'Vocify AI: Client error (no retry) - Order #' . $payload['orderNumber'] .
-                        ' - HTTP ' . $result['http_code'] . ': ' . $lastError,
-                        3,
-                        null,
-                        'Order',
-                        $orderId
-                    );
+                    if ($debugMode) {
+                        PrestaShopLogger::addLog(
+                            'Vocify AI: Client error (no retry) - Order #' . $payload['orderNumber'] .
+                            ' - HTTP ' . $result['http_code'] . ': ' . $lastError,
+                            3,
+                            null,
+                            'Order',
+                            $orderId
+                        );
+                    }
 
-                    return false;
+                    return $this->result(false, $result['http_code'], $result['response'], $lastError, false, $payload);
                 }
 
                 // Log retry attempt
@@ -408,44 +427,44 @@ class VocifyWebhookService
         $this->log($orderId, 'failed', $lastHttpCode, $lastError);
         $this->addToFailedQueue($orderId, $payload, $lastError);
 
-        PrestaShopLogger::addLog(
-            'Vocify AI: All retries failed for order #' . $payload['orderNumber'] .
-            ' - Last error: ' . $lastError,
-            3,
-            null,
-            'Order',
-            $orderId
-        );
+        if ($debugMode) {
+            PrestaShopLogger::addLog(
+                'Vocify AI: All retries failed for order #' . $payload['orderNumber'] . ' - Last error: ' . $lastError,
+                3,
+                null,
+                'Order',
+                $orderId
+            );
+        }
 
-        return false;
+        return $this->result(false, $lastHttpCode, null, $lastError, true, $payload);
     }
 
     /**
      * Send webhook to Vocify AI
      *
-     * @param array $payload
+     * The request body MUST be the exact string the HMAC signature was
+     * computed over — the platform verifies the signature against the raw
+     * body it receives.
+     *
+     * @param array  $payload
      * @param string $apiKey
      * @param string $webhookUrl
      * @return array
      */
-    private function sendWebhook($payload, $apiKey, $webhookUrl)
+    public function sendWebhook($payload, $apiKey, $webhookUrl)
     {
-        $storeDomain = parse_url(Tools::getShopDomainSsl(true), PHP_URL_HOST);
+        $storeDomain = $this->signer->extractDomain(Tools::getShopDomainSsl(true));
+        $signatureSecret = Configuration::get('VOCIFY_SIGNATURE_SECRET');
+
         $rawBody = json_encode($payload);
-        $signature = hash_hmac('sha256', $rawBody, $apiKey);
+        $headers = $this->signer->buildHeaders($apiKey, $storeDomain, $rawBody, $signatureSecret);
 
         $ch = curl_init($webhookUrl);
         curl_setopt_array($ch, array(
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => $rawBody,
-            CURLOPT_HTTPHEADER => array(
-                'Content-Type: application/json',
-                'X-Platform: ' . self::PLATFORM,
-                'X-API-Key: ' . $apiKey,
-                'X-Domain: ' . $storeDomain,
-                'X-Signature: ' . $signature,
-                'X-Timestamp: ' . gmdate('c'),
-            ),
+            CURLOPT_HTTPHEADER => $headers,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 30,
         ));
@@ -482,11 +501,81 @@ class VocifyWebhookService
     }
 
     /**
+     * Retry the failed webhooks queue (cron.php).
+     *
+     * Processes a batch of queued payloads in a single tick. Successes and
+     * permanent (4xx) failures are removed from the queue; transient
+     * failures (5xx, network) stay queued with an incremented retry_count.
+     *
+     * @return int Number of successfully re-sent webhooks.
+     */
+    public function retryFailedWebhooks()
+    {
+        $apiKey = Configuration::get('VOCIFY_API_KEY');
+
+        if (empty($apiKey)) {
+            return 0;
+        }
+
+        $webhookUrl = Configuration::get('VOCIFY_WEBHOOK_URL');
+        $rows = Db::getInstance()->executeS(
+            'SELECT id_webhook, id_order, payload FROM `' . _DB_PREFIX_ . 'vocify_failed_webhooks`
+             WHERE retry_count < ' . (int)self::FAILED_QUEUE_MAX_RETRIES . '
+             ORDER BY created_at ASC
+             LIMIT ' . (int)self::FAILED_QUEUE_BATCH
+        );
+
+        if (!$rows) {
+            return 0;
+        }
+
+        $sent = 0;
+        $db = Db::getInstance();
+
+        foreach ($rows as $row) {
+            $payload = json_decode($row['payload'], true);
+
+            if (!is_array($payload)) {
+                // Corrupt payload — drop it, it can never be sent.
+                $db->delete('vocify_failed_webhooks', 'id_webhook = ' . (int)$row['id_webhook']);
+                continue;
+            }
+
+            $result = $this->sendWebhook($payload, $apiKey, $webhookUrl);
+
+            if ($result['success']) {
+                $this->log((int)$row['id_order'], 'success', $result['http_code'], json_encode($result['response']));
+                $db->delete('vocify_failed_webhooks', 'id_webhook = ' . (int)$row['id_webhook']);
+                $sent++;
+                continue;
+            }
+
+            $httpCode = $result['http_code'];
+
+            // Permanent failure — remove from queue, log as error.
+            if ($httpCode >= 400 && $httpCode < 500) {
+                $this->log((int)$row['id_order'], 'error', $httpCode, $result['error']);
+                $db->delete('vocify_failed_webhooks', 'id_webhook = ' . (int)$row['id_webhook']);
+                continue;
+            }
+
+            // Transient failure — keep queued for the next tick.
+            $db->update('vocify_failed_webhooks', array(
+                'error_message' => pSQL(substr($result['error'], 0, 5000)),
+                'retry_count' => array('type' => 'sql', 'value' => 'retry_count + 1'),
+                'last_retry_at' => date('Y-m-d H:i:s'),
+            ), 'id_webhook = ' . (int)$row['id_webhook']);
+        }
+
+        return $sent;
+    }
+
+    /**
      * Log webhook attempt
      *
-     * @param int $orderId
+     * @param int    $orderId
      * @param string $status
-     * @param int $httpCode
+     * @param int    $httpCode
      * @param string $message
      * @return void
      */
@@ -504,8 +593,8 @@ class VocifyWebhookService
     /**
      * Add order to failed webhooks queue
      *
-     * @param int $orderId
-     * @param array $payload
+     * @param int    $orderId
+     * @param array  $payload
      * @param string $errorMessage
      * @return void
      */
@@ -559,6 +648,7 @@ class VocifyWebhookService
         // Reference: https://devdocs.prestashop.com/1.7/development/database/structure/order_state/
 
         $orderState = new OrderState($order->current_state);
+        $orderPayments = $order->getOrderPaymentCollection();
 
         // Check if order is paid
         if ($orderState->paid == 1) {
@@ -598,7 +688,6 @@ class VocifyWebhookService
 
             default:
                 // Check if order has any payments
-                $orderPayments = $order->getOrderPaymentCollection();
                 if ($orderPayments && count($orderPayments) > 0) {
                     return 'paid';
                 }
@@ -643,5 +732,28 @@ class VocifyWebhookService
                 }
                 return 'unfulfilled';
         }
+    }
+
+    /**
+     * Build a standardized result array.
+     *
+     * @param bool        $success
+     * @param int         $httpCode
+     * @param mixed       $response
+     * @param string|null $error
+     * @param bool        $retriesExhausted
+     * @param array|null  $payload
+     * @return array
+     */
+    private function result($success, $httpCode, $response, $error, $retriesExhausted, $payload)
+    {
+        return array(
+            'success' => (bool)$success,
+            'http_code' => (int)$httpCode,
+            'response' => $response,
+            'error' => $error,
+            'retries_exhausted' => (bool)$retriesExhausted,
+            'payload' => $payload,
+        );
     }
 }

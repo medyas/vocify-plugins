@@ -22,6 +22,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-08-14
+
+### Changed
+
+- **Webhook contract alignment**: Requests now use the platform's unified headers (`X-Platform`, `X-API-Key`, `X-Domain`, `X-Timestamp`) instead of the old `X-Vocify-*` headers.
+- **Signing secret**: `X-Signature` is now HMAC-SHA256 over the exact raw JSON body using the per-agent **webhook signing secret** (`signatureSecret`) from the dashboard — not the API key. The header is only sent when a secret is configured (an unverifiable signature hard-fails with 401).
+- **Test connection**: No longer posts a fake payload; performs a GET health check on the webhook URL, validates the API key format (`vcf_live_...`/`vcf_test_...`), and warns when no signing secret is configured.
+- **Local validation**: New `Vocify_AI_Payload_Validator` mirrors the platform's Zod schema so invalid payloads fail fast with readable errors instead of opaque 400s.
+- **Status bar**: Admin settings now show Not configured / Active / Active - no signing secret / Disabled.
+- **Automatic retry**: Hourly WP-Cron job re-sends previously failed webhooks (`vocify_retry_failed_webhooks`).
+
+### Added
+
+- `includes/class-vocify-signer.php` — HMAC signing + header building (unit-testable, no WP bootstrap).
+- `includes/class-vocify-payload-builder.php` — pure-array payload mapping (address/phone fallbacks, enum clamping, ISO dates).
+- `includes/class-vocify-payload-validator.php` — schema mirror with human-readable errors.
+- Settings field for the webhook signing secret.
+- PHPUnit test suite (`tests/`, `phpunit.xml`, `composer.json` dev deps) — 27 tests covering builder, validator, signer.
+
+### Fixed
+
+- **CRITICAL**: `send_order_webhook()` indexed the old boolean `send_order()` result as an array — any webhook outcome would emit a PHP warning and the failure branch silently ran. The service now returns a structured result array.
+- **CRITICAL**: `format_phone()` was called but never defined in the payload builder — every order would fatal-error. Implemented (libphonenumber E.164 with separator-strip fallback).
+- Duplicate logging: the order handler no longer writes its own `vocify_webhook_logs`/queue rows — the webhook service owns all persistence.
+- Order-creation guard restored: `handle_new_order()` checks the integration toggle before sending.
+
+---
+
 ## [1.0.0] - 2025-11-16
 
 ### Added
@@ -172,5 +200,6 @@ This project uses [Semantic Versioning](https://semver.org/):
 
 ---
 
-[Unreleased]: https://github.com/vocify-ai/woocommerce-plugin/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/vocify-ai/woocommerce-plugin/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/vocify-ai/woocommerce-plugin/releases/tag/v1.1.0
 [1.0.0]: https://github.com/vocify-ai/woocommerce-plugin/releases/tag/v1.0.0

@@ -3,24 +3,37 @@
     "description": "Vocify AI - Order Confirmation Calls Module for PrestaShop",
     "type": "prestashop-module",
     "license": "MIT",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "authors": [
         {
             "name": "Vocify AI",
-            "email": "developers@vocify-ai.com"
+            "email": "developers@vocify-ai.com",
+            "homepage": "https://vocify-ai.com"
         }
     ],
     "require": {
         "php": ">=7.1.0",
         "giggsey/libphonenumber-for-php": "^8.13"
     },
+    "require-dev": {
+        "phpunit/phpunit": "^8.5 || ^9.6"
+    },
     "autoload": {
         "classmap": [
             "classes/"
         ]
     },
+    "autoload-dev": {
+        "classmap": [
+            "tests/"
+        ]
+    },
     "config": {
         "optimize-autoloader": true,
         "sort-packages": true
+    },
+    "scripts": {
+        "test": "@php vendor/bin/phpunit",
+        "lint": "find classes -name '*.php' -exec php -l {} \\; && php -l vocifyai.php"
     }
 }

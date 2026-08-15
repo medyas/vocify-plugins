@@ -25,14 +25,26 @@
         "php": ">=7.4.0",
         "giggsey/libphonenumber-for-php": "^8.13"
     },
+    "require-dev": {
+        "phpunit/phpunit": "^9.6"
+    },
     "autoload": {
         "classmap": [
             "includes/"
         ]
     },
+    "autoload-dev": {
+        "classmap": [
+            "tests/"
+        ]
+    },
     "config": {
         "optimize-autoloader": true,
         "sort-packages": true
+    },
+    "scripts": {
+        "test": "@php vendor/bin/phpunit",
+        "lint": "@php -l vocify-ai-woocommerce.php && find includes -name '*.php' -exec php -l {} \\;"
     },
     "support": {
         "email": "developers@vocify-ai.com",

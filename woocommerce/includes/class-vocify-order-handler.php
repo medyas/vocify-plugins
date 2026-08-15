@@ -5,7 +5,7 @@
  * Handles WooCommerce order events and sends webhooks to Vocify AI
  *
  * @package VocifyAI
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 if (!defined('ABSPATH')) {
@@ -111,6 +111,15 @@ class Vocify_AI_Order_Handler {
     }
 
     /**
+     * Retry failed webhooks (scheduled hourly via WP-Cron)
+     *
+     * @return int Number of successfully re-sent webhooks.
+     */
+    public function retry_failed_webhooks() {
+        return $this->webhook_service->retry_failed_webhooks();
+    }
+
+    /**
      * Send order webhook
      *
      * @param WC_Order $order      Order object
@@ -120,14 +129,13 @@ class Vocify_AI_Order_Handler {
         try {
             $result = $this->webhook_service->send_order($order);
 
-            // Log the result
+            // The webhook service already logs every attempt to the database
+            // and manages the failed-webhook queue; the handler only surfaces
+            // the outcome to the merchant via order notes and debug logs.
             if ($result['success']) {
-                // Log success
-                $this->log_webhook($order->get_id(), 'success', $result['http_code'], $result['response']);
-
-                // Add order note
                 $order->add_order_note(
                     sprintf(
+                        /* translators: 1: Event type 2: HTTP code */
                         __('Vocify AI webhook sent successfully (Event: %s, HTTP Code: %d)', 'vocify-ai'),
                         $event_type,
                         $result['http_code']
@@ -141,22 +149,14 @@ class Vocify_AI_Order_Handler {
                     );
                 }
             } else {
-                // Log failure
-                $this->log_webhook($order->get_id(), 'failed', $result['http_code'], $result['response'], $result['error']);
-
-                // Add order note
                 $order->add_order_note(
                     sprintf(
+                        /* translators: 1: Event type 2: Error */
                         __('Vocify AI webhook failed (Event: %s, Error: %s)', 'vocify-ai'),
                         $event_type,
                         $result['error']
                     )
                 );
-
-                // Save to failed queue if retries exhausted
-                if ($result['retries_exhausted']) {
-                    $this->save_failed_webhook($order->get_id(), $result['payload'], $result['error']);
-                }
 
                 if (get_option('vocify_debug_mode') === 'yes') {
                     wc_get_logger()->error(
@@ -166,12 +166,11 @@ class Vocify_AI_Order_Handler {
                 }
             }
         } catch (Exception $e) {
-            // Log exception
             $error_message = $e->getMessage();
-            $this->log_webhook($order->get_id(), 'error', 0, '', $error_message);
 
             $order->add_order_note(
                 sprintf(
+                    /* translators: 1: Event type 2: Error */
                     __('Vocify AI webhook exception (Event: %s, Error: %s)', 'vocify-ai'),
                     $event_type,
                     $error_message
@@ -185,59 +184,6 @@ class Vocify_AI_Order_Handler {
                 );
             }
         }
-    }
-
-    /**
-     * Log webhook attempt to database
-     *
-     * @param int    $order_id      Order ID
-     * @param string $status        Status (success, failed, error)
-     * @param int    $http_code     HTTP response code
-     * @param string $response      Response body
-     * @param string $error_message Error message
-     */
-    private function log_webhook($order_id, $status, $http_code = null, $response = '', $error_message = '') {
-        global $wpdb;
-
-        $table_name = $wpdb->prefix . 'vocify_webhook_logs';
-
-        $wpdb->insert(
-            $table_name,
-            array(
-                'order_id'      => $order_id,
-                'status'        => $status,
-                'http_code'     => $http_code,
-                'response'      => $response,
-                'error_message' => $error_message,
-                'created_at'    => current_time('mysql'),
-            ),
-            array('%d', '%s', '%d', '%s', '%s', '%s')
-        );
-    }
-
-    /**
-     * Save failed webhook to queue
-     *
-     * @param int    $order_id      Order ID
-     * @param array  $payload       Webhook payload
-     * @param string $error_message Error message
-     */
-    private function save_failed_webhook($order_id, $payload, $error_message) {
-        global $wpdb;
-
-        $table_name = $wpdb->prefix . 'vocify_failed_webhooks';
-
-        $wpdb->insert(
-            $table_name,
-            array(
-                'order_id'      => $order_id,
-                'payload'       => wp_json_encode($payload),
-                'error_message' => $error_message,
-                'retry_count'   => 0,
-                'created_at'    => current_time('mysql'),
-            ),
-            array('%d', '%s', '%s', '%d', '%s')
-        );
     }
 
     /**

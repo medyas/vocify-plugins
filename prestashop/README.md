@@ -123,6 +123,7 @@ This method works without Composer but uses basic phone number formatting.
 3. Go to **Integrations** → **Create Integration** → **Select PrestaShop**
 4. Copy the generated API key (format: `vcf_live_XXXXXXXXXXXXXXXXXXXX`)
 5. **Important**: Save this key immediately - it's only shown once!
+6. If a **webhook signing secret** is shown for your API key, copy it into the module's **Webhook Signing Secret** field.
 
 ### Module Settings
 
@@ -131,17 +132,28 @@ Access configuration: **Modules** → **Module Manager** → **Vocify AI** → *
 | Setting | Description | Required | Default |
 |---------|-------------|----------|---------|
 | **API Key** | Your Vocify AI API key from the dashboard | ✅ Yes | - |
+| **Webhook Signing Secret** | Signs each webhook request (`X-Signature`); shown once when you create your API key | Recommended | - |
 | **Enable Integration** | Turn the integration on/off | ✅ Yes | Disabled |
 | **Debug Mode** | Enable verbose logging for troubleshooting | No | Disabled |
 | **Webhook URL** | Vocify AI webhook endpoint | ✅ Yes | `https://app.vocify-ai.com/api/webhooks/ecommerce` |
 | **Store Domain** | Your store domain (auto-detected, read-only) | - | Auto-detected |
+| **Retry Cron URL** | Token-protected URL that re-sends failed webhooks (display-only) | - | Generated |
 
 ### Test Connection
 
 After entering your API key:
+
 1. Click the **Test Connection** button
-2. If successful, you'll see: *"Connection successful! Your API key is valid."*
-3. If it fails, verify your API key and check your server's ability to make HTTPS requests
+2. The module checks the webhook URL health endpoint and validates your API key format locally (no fake payload is sent)
+3. If successful, you'll see: *"Connection successful! Your API key is valid."*
+4. If no signing secret is configured, you'll get a warning — requests still work, but the platform cannot verify their authenticity
+5. If it fails, verify your API key and check your server's ability to make HTTPS requests
+
+### Failed Webhook Retry
+
+- Failed webhooks are queued in the database (`{prefix}_vocify_failed_webhooks`)
+- Open the **Retry Cron URL** (shown on the config page) in a browser or schedule it with a cron job to re-send queued webhooks; the URL is protected by a per-install token and returns `OK:<count>` of re-sent webhooks
+- 4xx errors are never retried (they indicate a configuration issue); 5xx and network errors are
 
 ---
 

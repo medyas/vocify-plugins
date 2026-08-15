@@ -87,6 +87,13 @@ class Vocify_AI_Admin {
             'sanitize_callback' => 'esc_url_raw',
             'default'           => 'https://app.vocify-ai.com/api/webhooks/ecommerce',
         ));
+
+        // Webhook Signing Secret (signatureSecret from the Vocify AI dashboard)
+        register_setting('vocify_ai_settings', 'vocify_signature_secret', array(
+            'type'              => 'string',
+            'sanitize_callback' => 'sanitize_text_field',
+            'default'           => '',
+        ));
     }
 
     /**
@@ -148,11 +155,28 @@ class Vocify_AI_Admin {
         }
 
         // Get current settings
-        $api_key      = get_option('vocify_api_key', '');
-        $enabled      = get_option('vocify_enabled', 'no');
-        $debug_mode   = get_option('vocify_debug_mode', 'no');
-        $webhook_url  = get_option('vocify_webhook_url', 'https://app.vocify-ai.com/api/webhooks/ecommerce');
-        $store_domain = parse_url(get_site_url(), PHP_URL_HOST);
+        $api_key           = get_option('vocify_api_key', '');
+        $enabled           = get_option('vocify_enabled', 'no');
+        $debug_mode        = get_option('vocify_debug_mode', 'no');
+        $webhook_url       = get_option('vocify_webhook_url', 'https://app.vocify-ai.com/api/webhooks/ecommerce');
+        $signature_secret  = get_option('vocify_signature_secret', '');
+        $store_domain      = parse_url(get_site_url(), PHP_URL_HOST);
+
+        $status_class = 'vocify-status-not-configured';
+        $status_label = __('Not configured', 'vocify-ai');
+
+        if ('yes' === $enabled && !empty($api_key)) {
+            if (empty($signature_secret)) {
+                $status_class = 'vocify-status-warning';
+                $status_label = __('Active - no signing secret', 'vocify-ai');
+            } else {
+                $status_class = 'vocify-status-active';
+                $status_label = __('Active', 'vocify-ai');
+            }
+        } elseif ('yes' !== $enabled && !empty($api_key)) {
+            $status_class = 'vocify-status-warning';
+            $status_label = __('Disabled', 'vocify-ai');
+        }
 
         ?>
         <div class="wrap">
@@ -162,6 +186,10 @@ class Vocify_AI_Admin {
 
             <div class="vocify-settings-container">
                 <div class="vocify-main-content">
+                    <div class="vocify-status-bar">
+                        <span class="vocify-status-dot <?php echo esc_attr($status_class); ?>"></span>
+                        <strong><?php echo esc_html($status_label); ?></strong>
+                    </div>
                     <form method="post" action="options.php">
                         <?php
                         settings_fields('vocify_ai_settings');
@@ -254,6 +282,26 @@ class Vocify_AI_Admin {
                                     />
                                     <p class="description">
                                         <?php esc_html_e('Vocify AI webhook endpoint. Leave as default unless instructed otherwise.', 'vocify-ai'); ?>
+                                    </p>
+                                </td>
+                            </tr>
+
+                            <!-- Webhook Signing Secret -->
+                            <tr>
+                                <th scope="row">
+                                    <label for="vocify_signature_secret"><?php esc_html_e('Webhook Signing Secret', 'vocify-ai'); ?></label>
+                                </th>
+                                <td>
+                                    <input
+                                        type="password"
+                                        id="vocify_signature_secret"
+                                        name="vocify_signature_secret"
+                                        value="<?php echo esc_attr($signature_secret); ?>"
+                                        class="regular-text"
+                                        autocomplete="off"
+                                    />
+                                    <p class="description">
+                                        <?php esc_html_e('The webhook signing secret (signatureSecret) shown once in the Vocify AI dashboard when the API key is created. Required to sign webhook requests; leave empty only if your API key has no signing secret.', 'vocify-ai'); ?>
                                     </p>
                                 </td>
                             </tr>
@@ -413,6 +461,11 @@ class Vocify_AI_Admin {
 
     /**
      * AJAX handler for test connection
+     *
+     * The platform has no dedicated key-validation endpoint, so the test:
+     * 1. verifies the API key format locally (vcf_live_...)
+     * 2. verifies the webhook URL is reachable via its GET health endpoint
+     * 3. warns when the signing secret is missing but a key is configured
      */
     public function ajax_test_connection() {
         // Verify nonce
@@ -434,30 +487,25 @@ class Vocify_AI_Admin {
             ));
         }
 
+        if (!preg_match('/^vcf_(live|test)_[a-zA-Z0-9]{16,}$/', $api_key)) {
+            wp_send_json_error(array(
+                'message' => __('API key format looks invalid. Expected format: vcf_live_XXXXXXXXXXXXXXXXXXXX', 'vocify-ai'),
+            ));
+        }
+
+        $signature_secret = get_option('vocify_signature_secret', '');
+
         // Get webhook URL
         $webhook_url = get_option('vocify_webhook_url', 'https://app.vocify-ai.com/api/webhooks/ecommerce');
 
-        // Create test payload
-        $test_payload = array(
-            'platform'   => 'woocommerce',
-            'test'       => true,
-            'timestamp'  => current_time('mysql'),
-            'storeDomain' => parse_url(get_site_url(), PHP_URL_HOST),
-        );
-
-        // Send test request
-        $response = wp_remote_post($webhook_url, array(
+        // 1. Reachability + health of the endpoint (GET).
+        $response = wp_remote_get($webhook_url, array(
             'timeout' => 10,
             'headers' => array(
-                'Content-Type'        => 'application/json',
-                'X-Vocify-API-Key'    => $api_key,
-                'X-Vocify-Signature'  => hash_hmac('sha256', wp_json_encode($test_payload), $api_key),
-                'X-Vocify-Timestamp'  => time(),
+                'X-API-Key' => $api_key,
             ),
-            'body'    => wp_json_encode($test_payload),
         ));
 
-        // Check for errors
         if (is_wp_error($response)) {
             wp_send_json_error(array(
                 'message' => sprintf(
@@ -469,22 +517,36 @@ class Vocify_AI_Admin {
         }
 
         $http_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
 
-        // Check HTTP code
-        if ($http_code >= 200 && $http_code < 300) {
+        $warnings = array();
+
+        if (empty($signature_secret)) {
+            $warnings[] = __('No webhook signing secret configured. If your API key was created with a signing secret, requests will be rejected with 401 — add it above.', 'vocify-ai');
+        }
+
+        if ($http_code === 200 && isset($body['status']) && $body['status'] === 'healthy') {
+            $message = __('Connection successful! The Vocify AI webhook endpoint is reachable.', 'vocify-ai');
+
+            if (count($warnings) > 0) {
+                $message .= ' ' . implode(' ', $warnings);
+                wp_send_json_error(array(
+                    'message' => $message,
+                ));
+            }
+
             wp_send_json_success(array(
-                'message' => __('Connection successful! Your API key is valid.', 'vocify-ai'),
-            ));
-        } else {
-            wp_send_json_error(array(
-                'message' => sprintf(
-                    /* translators: 1: HTTP code 2: Response body */
-                    __('Connection failed with HTTP code %1$d: %2$s', 'vocify-ai'),
-                    $http_code,
-                    $body
-                ),
+                'message' => $message,
             ));
         }
+
+        wp_send_json_error(array(
+            'message' => sprintf(
+                /* translators: 1: HTTP code 2: Response body */
+                __('Connection failed with HTTP code %1$d: %2$s', 'vocify-ai'),
+                $http_code,
+                wp_remote_retrieve_body($response)
+            ),
+        ));
     }
 }

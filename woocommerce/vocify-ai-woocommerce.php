@@ -3,7 +3,7 @@
  * Plugin Name: Vocify AI - Order Confirmation Calls
  * Plugin URI: https://vocify-ai.com
  * Description: Automate order confirmation calls with AI voice technology. Enhance customer experience and reduce order cancellations.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Vocify AI
  * Author URI: https://vocify-ai.com
  * License: MIT
@@ -16,7 +16,7 @@
  * WC tested up to: 8.5
  *
  * @package VocifyAI
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 if (!defined('ABSPATH')) {
@@ -24,7 +24,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('VOCIFY_AI_VERSION', '1.0.0');
+define('VOCIFY_AI_VERSION', '1.1.0');
 define('VOCIFY_AI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('VOCIFY_AI_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('VOCIFY_AI_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -35,6 +35,9 @@ if (file_exists(VOCIFY_AI_PLUGIN_DIR . 'vendor/autoload.php')) {
 }
 
 // Include required files
+require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-signer.php';
+require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-payload-builder.php';
+require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-payload-validator.php';
 require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-webhook-service.php';
 require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-admin.php';
 require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-order-handler.php';
@@ -106,11 +109,23 @@ class Vocify_AI_WooCommerce {
         // Plugin action links
         add_filter('plugin_action_links_' . VOCIFY_AI_PLUGIN_BASENAME, array($this, 'plugin_action_links'));
 
+        // Hourly retry of failed webhooks (WP-Cron)
+        add_action('vocify_retry_failed_webhooks', array($this, 'retry_failed_webhooks'));
+
         // Load text domain
         add_action('plugins_loaded', array($this, 'load_textdomain'));
 
         // Declare HPOS compatibility
         add_action('before_woocommerce_init', array($this, 'declare_hpos_compatibility'));
+    }
+
+    /**
+     * Retry failed webhooks (scheduled hourly)
+     */
+    public function retry_failed_webhooks() {
+        if ($this->order_handler) {
+            $this->order_handler->retry_failed_webhooks();
+        }
     }
 
     /**
@@ -143,6 +158,11 @@ class Vocify_AI_WooCommerce {
         // Set default options
         $this->set_default_options();
 
+        // Schedule hourly retry of failed webhooks
+        if (!wp_next_scheduled('vocify_retry_failed_webhooks')) {
+            wp_schedule_event(time(), 'hourly', 'vocify_retry_failed_webhooks');
+        }
+
         // Flush rewrite rules
         flush_rewrite_rules();
     }
@@ -151,6 +171,9 @@ class Vocify_AI_WooCommerce {
      * Plugin deactivation
      */
     public function deactivate() {
+        // Clear scheduled retry
+        wp_clear_scheduled_hook('vocify_retry_failed_webhooks');
+
         // Flush rewrite rules
         flush_rewrite_rules();
     }
@@ -205,6 +228,7 @@ class Vocify_AI_WooCommerce {
     private function set_default_options() {
         $defaults = array(
             'vocify_api_key' => '',
+            'vocify_signature_secret' => '',
             'vocify_enabled' => 'no',
             'vocify_debug_mode' => 'no',
             'vocify_webhook_url' => 'https://app.vocify-ai.com/api/webhooks/ecommerce',

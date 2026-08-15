@@ -458,10 +458,23 @@ When reporting bugs, include:
 1. WordPress version
 2. WooCommerce version
 3. PHP version
-4. Plugin version (1.0.0)
+4. Plugin version (1.1.0)
 5. Installation method (Composer/Manual/FTP)
 6. Error message from logs
 7. Steps to reproduce
+
+---
+
+## Running Tests
+
+The plugin ships with a PHPUnit suite for the platform-agnostic core (signer, payload builder, payload validator):
+
+```bash
+composer install            # installs dev dependencies
+composer test               # runs phpunit (tests/)
+```
+
+The suite needs no WordPress installation — it loads the core classes directly.
 
 ---
 
