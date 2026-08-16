@@ -4,7 +4,7 @@ This document outlines the best practices for developing and maintaining the Voc
 
 ## ⚠️ Progress Protocol (READ FIRST)
 
-Work on the `vocify-v2` branch (hard gate: every commit on `vocify-v2`, pushed to origin). `PROGRESS.md` is the single source of truth for plugin status.
+Work on `main` (trunk since 2026-08-16 — the workspace-wide `vocify-v2` gate is retired; the branch never existed in this repo), directly or via a short-lived feature branch merged into `main`, pushed to origin. `PROGRESS.md` is the single source of truth for plugin status.
 
 **MANDATORY every session:**
 1. **Before starting**, read `PROGRESS.md`, find the current task, mark it `🔄 in progress`.

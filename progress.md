@@ -2,7 +2,7 @@
 
 **Last Updated**: 2026-08-14
 **Version**: 1.1.0 (WooCommerce + PrestaShop)
-**Branch:** `vocify-v2` (all commits here, pushed to origin) — ⚠️ NOTE: repo currently on `main`; `vocify-v2` doesn't exist yet, pending branch decision before commit.
+**Branch:** `main` (trunk — decided by the owner 2026-08-16; the old `vocify-v2` gate is retired and the branch was never created here. Work lands on `main` or a short-lived feature branch, pushed to origin.)
 
 > **Update rule (enforced by CLAUDE.md):** this file is the single source of truth for plugin status. Mark a feature 🚧 when you start it; before claiming any feature done, set its row to ✅ with a note, in the same turn as the work. Plugins have no v2 spec rewrite — the webhook contract in `claude.md` is stable; the platform's switch to synchronous intake + LiveKit is invisible to plugins.
 
@@ -47,7 +47,7 @@ This document tracks the development progress of all Vocify AI e-commerce CMS pl
 | PrestaShop retry cron endpoint | ✅ | `controllers/front/cron.php`, per-install token, `hash_equals`, `OK:<count>` |
 | PHPUnit suites (no CMS bootstrap) | ✅ | WC 27/27, PS 31/31 — run via Docker `composer:2`, php 8.2 CLI |
 | Docs (README/INSTALL/CHANGELOG) v1.1.0 | ✅ | signing secret + cron + tests documented |
-| Commit + push on `vocify-v2` | 🔄 | blocked on branch decision (repo on `main`), commit ref TBD |
+| Commit + push on `main` | ✅ | already on `main` — `a8e8c23` (the "blocked on branch decision" note was stale; owner resolved 2026-08-16: trunk is `main`) |
 
 **Validation:** `php -l` over all 32 plugin PHP files clean; PHPUnit WC 27 tests/68 assertions, PS 31 tests/71 assertions green.
 
@@ -279,7 +279,7 @@ This document tracks the development progress of all Vocify AI e-commerce CMS pl
 |-------|----------|--------|------------|
 | `app.vocify-ai.com` has no DNS record (checked 2026-08-14) | Both | ⚠️ External | Domain must be live before Test Connection / webhooks succeed; plugin surfaces HTTP codes so failures are visible |
 | `GET /api/webhooks/ecommerce` health behavior unverified (no reachable host) | Both | 🚧 | Verify once platform dev server or production domain is reachable |
-| Repo on `main`, `vocify-v2` branch doesn't exist — claude.md hard gate | Both | 🚧 | Create `vocify-v2` and commit there (pending user decision) |
+| ~~Repo on `main`, `vocify-v2` branch doesn't exist — claude.md hard gate~~ | Both | ✅ Resolved | Owner decided 2026-08-16: trunk is `main`; commit there |
 
 ---
 
@@ -289,7 +289,7 @@ This document tracks the development progress of all Vocify AI e-commerce CMS pl
 1. ✅ WooCommerce + PrestaShop v1.1.0 contract sync (2026-08-14)
 2. ✅ PHPUnit suites green (WC 27/27, PS 31/31 via Docker composer)
 3. ✅ Docs + CHANGELOGs updated
-4. 🔄 Commit on `vocify-v2` (branch decision pending)
+4. ✅ Committed on `main` — `a8e8c23` (branch question resolved 2026-08-16: trunk is `main`)
 5. 📋 Live-store smoke test once `app.vocify-ai.com` resolves
 6. 📋 Integration tests with real CMS bootstrap (WP/PrestaShop test envs)
 
