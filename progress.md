@@ -202,8 +202,9 @@ A probe row left completely untouched on live Supabase climbed
 `sync_attempts` 0→1→2→3 on its own, and its order went `SCHEDULED` → `CONFIRMED`
 at the same tick that failed the push. Two consequences. First, the platform's
 divergence bug has already left **21 live orders** showing a status their shop
-was never told about (20 `CONFIRMED` + 1 `CANCELLED`, one company,
-2026-08-13 -> 2026-09-18). That set is **frozen, not growing per minute**: the
+was never told about (20 `CONFIRMED` + 1 `CANCELLED`, 2026-08-13 -> 2026-09-18),
+all belonging to one company named "Demo Company" (created 2025-11-29) — likely
+the project's own demo tenant, inferred from the name and not confirmed. That set is **frozen, not growing per minute**: the
 cron's candidate query (`ecommerce-sync.service.ts:306-309`) takes only
 `syncStatus: 'pending'` AND `syncAttempts < MAX`, so the 67 exhausted `failed`
 rows are never revisited -- new damage accrues once per NEW completed call, not

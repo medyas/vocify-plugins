@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# PrestaShop end-to-end stack for the Vocify plugin harness.
+#
+# Same shape as docker-compose.wc.yml: throwaway DB on tmpfs, module source
+# bind-mounted read-only from this working tree, harness scripts mounted
+# separately at /e2e.
+#
+# ⚠️ PS_DOMAIN feeds Tools::getShopDomainSsl(), which VocifyWebhookService
+# reports as X-Domain. It MUST equal integrations.store_domain byte-for-byte
+# after the platform's normalization (which strips scheme/www/trailing slash
+# but NOT a port) — orchestrate.mjs derives both from one constant.
+name: vocify-e2e-ps
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: vocify-e2e-ps-db
+    environment:
+      MYSQL_ROOT_PASSWORD: psroot
+      MYSQL_DATABASE: prestashop
+      MYSQL_USER: prestashop
+      MYSQL_PASSWORD: prestashop
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-uroot', '-ppsroot']
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    tmpfs:
+      - /var/lib/mysql
+
+  prestashop:
+    image: prestashop/prestashop:8-apache
+    container_name: vocify-e2e-ps-shop
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DB_SERVER: db
+      DB_NAME: prestashop
+      DB_USER: prestashop
+      DB_PASSWD: prestashop
+      PS_INSTALL_AUTO: 1
+      # NOT PS_ERASE_DB. The research proposal recommended it (PrestaShop/docker#240
+      # says PS_INSTALL_AUTO is ignored on a non-empty DB without it) — but
+      # measured here it makes the install FAIL: `clearDatabase()` drops the
+      # schema and the `prestashop` user cannot recreate it, so the installer
+      # dies with "Unknown database 'prestashop'". This stack's MySQL runs on
+      # tmpfs with no volume, so every `up` already starts from an empty,
+      # freshly-created database and there is nothing to erase.
+      PS_DEV_MODE: 0
+      PS_DOMAIN: ps-e2e.vocify.test
+      PS_FOLDER_ADMIN: admin_e2e
+      PS_FOLDER_INSTALL: install_e2e
+      PS_COUNTRY: fr
+      PS_LANGUAGE: en
+      ADMIN_MAIL: admin@e2e.invalid
+      ADMIN_PASSWD: AdminE2E123!
+    # NO published port, deliberately. Nothing in the harness reaches the shop
+    # over HTTP — WordPress is driven entirely through `docker compose exec`
+    # (WP-CLI), PrestaShop through `php`, and readiness is a file check, not a
+    # request. Publishing a port bought nothing and cost a real failure: a
+    # teammate's container already held 127.0.0.1:58081 on this machine and
+    # `compose up` died with "port is already allocated". To poke at the shop
+    # by hand during a `--keep-up` session, add a `ports:` mapping locally.
+    volumes:
+      - ../../prestashop:/var/www/html/modules/vocifyai:ro
+      - ./ps:/e2e:ro
+    tmpfs:
+      # Shadow the module's `vendor/` with an empty directory so the container
+      # sees the module EXACTLY as it ships. `vendor/` is gitignored and not
+      # tracked — it exists in the working tree only because a previous session
+      # ran `composer install` (with dev deps) to get PHPUnit.
+      #
+      # This is not cosmetic. `vocifyai.php:16` loads `vendor/autoload.php`
+      # unconditionally when present, and the dev tree's PHPUnit pulls in
+      # nikic/php-parser v5, which shadows the v4 PrestaShop itself depends on.
+      # Measured: with the dev vendor/ visible,
+      # `php bin/console prestashop:module install vocifyai` dies with
+      # "Attempted to call an undefined method PhpParser\ParserFactory::create()"
+      # and NO module can be installed at all. Worth knowing about, but it is a
+      # property of a dev checkout, not of the released module.
+      - /var/www/html/modules/vocifyai/vendor
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    restart: 'no'

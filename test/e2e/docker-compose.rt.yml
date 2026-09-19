@@ -1,0 +1,73 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# RETURN-PATH WooCommerce stack (platform → shop).
+#
+# A second, independent shop, deliberately NOT `docker-compose.wc.yml`:
+#
+#   * The inbound suite's shop is addressed as `wc-e2e.vocify.test:58080` — a
+#     name that only the container's own `siteurl` option knows about. That is
+#     fine when the SHOP dials out, which is all the inbound direction needs.
+#   * The return path runs the other way: the PLATFORM has to reach the shop.
+#     That requires the shop to have a real, publicly resolvable https origin,
+#     because `assertSafeExternalUrl()` (platform/src/lib/utils/safe-url.ts)
+#     refuses anything else — correctly. So this shop is installed with a
+#     Cloudflare quick-tunnel hostname as its `siteurl`/`home`, and the
+#     platform's `integrations.store_url` points at that same hostname.
+#
+# Keeping the two shops apart means the return-path run can never rewrite the
+# inbound shop's `siteurl` out from under it (which is exactly what happened
+# once, when both suites shared one stack).
+#
+# Nothing is persisted: MariaDB is on tmpfs, WordPress core lives in the
+# container filesystem. `down -v` really does reset the shop.
+name: vocify-e2e-rt
+
+services:
+  db:
+    image: mariadb:11.4
+    container_name: vocify-e2e-rt-db
+    environment:
+      MARIADB_ROOT_PASSWORD: wproot
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: wordpress
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    tmpfs:
+      - /var/lib/mysql
+
+  wordpress:
+    image: wordpress:php8.3-apache
+    container_name: vocify-e2e-rt-wp
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+      WORDPRESS_DEBUG: '0'
+    ports:
+      # 58081, one above the inbound shop's 58080, so both can be up at once.
+      - '127.0.0.1:58081:80'
+    volumes:
+      # THE FILE UNDER TEST, read-only — same mount as the inbound stack.
+      - ../../woocommerce:/var/www/html/wp-content/plugins/vocify-ai-woocommerce:ro
+      - ./wc:/e2e:ro
+      - ./rt:/e2e-rt:ro
+      - ./.cache:/e2e-cache:ro
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    restart: 'no'
+
+  # The shop's public origin. A quick tunnel needs no Cloudflare account and
+  # gives a real hostname with real TLS, which is the only thing that lets the
+  # platform's SSRF guard pass a shop running on this laptop.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: vocify-e2e-rt-tunnel
+    depends_on: [wordpress]
+    command: tunnel --no-autoupdate --url http://wordpress:80
+    restart: 'no'

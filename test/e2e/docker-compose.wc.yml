@@ -1,0 +1,69 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# WooCommerce end-to-end stack for the Vocify plugin harness.
+#
+# A cold `docker compose -f docker-compose.wc.yml up -d` gives a throwaway
+# WordPress + WooCommerce store with the plugin source from THIS working tree
+# bind-mounted in place (not a rebuilt zip), so the PHP under test is literally
+# the PHP in the repo.
+#
+# Nothing is persisted: MariaDB runs on tmpfs and WordPress core lives in the
+# container filesystem, so `down -v` really does reset the shop.
+#
+# The store does NOT talk to the platform over this compose network — it posts
+# to a Cloudflare quick-tunnel URL over the public internet. That is required,
+# not incidental: both plugins' 2026-09-18 SSRF hardening refuses any non-https
+# webhook URL, and PrestaShop additionally refuses any host resolving to a
+# private range, which every Docker address is. See README.md.
+name: vocify-e2e-wc
+
+services:
+  db:
+    image: mariadb:11.4
+    container_name: vocify-e2e-wc-db
+    environment:
+      MARIADB_ROOT_PASSWORD: wproot
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: wordpress
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    tmpfs:
+      - /var/lib/mysql
+
+  wordpress:
+    image: wordpress:php8.3-apache
+    container_name: vocify-e2e-wc-wp
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+      WORDPRESS_DEBUG: '0'
+    # NO published port, deliberately. Nothing in the harness reaches the shop
+    # over HTTP — WordPress is driven entirely through `docker compose exec`
+    # (WP-CLI), PrestaShop through `php`, and readiness is a file check, not a
+    # request. Publishing a port bought nothing and cost a real failure: a
+    # teammate's container already held 127.0.0.1:58081 on this machine and
+    # `compose up` died with "port is already allocated". To poke at the shop
+    # by hand during a `--keep-up` session, add a `ports:` mapping locally.
+    volumes:
+      # THE FILE UNDER TEST. Read-only: WordPress never needs to write into a
+      # plugin directory, and ro makes it impossible for a test run to mutate
+      # the working tree it is supposed to be testing.
+      - ../../woocommerce:/var/www/html/wp-content/plugins/vocify-ai-woocommerce:ro
+      # Harness-owned scripts (provisioning, order fixtures, capture mu-plugin).
+      # Deliberately NOT under the plugin mount — nothing here ships to a
+      # merchant, and mixing the two would blur what is under test.
+      - ./wc:/e2e:ro
+      # wp-cli.phar, fetched once by orchestrate.mjs into .cache/ so the
+      # container needs no download step of its own.
+      - ./.cache:/e2e-cache:ro
+    extra_hosts:
+      # Redundant under Docker Desktop, required under a WSL-native dockerd.
+      - 'host.docker.internal:host-gateway'
+    restart: 'no'
