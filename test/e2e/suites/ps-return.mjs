@@ -185,6 +185,18 @@ const iso = (offsetSeconds = 0) => new Date(Date.now() + offsetSeconds * 1000).t
 export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   rec.group('return path — platform → PrestaShop');
 
+  // Every callSid this suite sends is prefixed with a per-run token.
+  //
+  // ⚠️ `vocify_call_results.call_sid` is UNIQUE — that index is what makes a
+  // replayed push a no-op — and it is GLOBAL, not per-order. With fixed sids a
+  // second run against the same shop (`--reuse`) answers every push
+  // "Already applied (duplicate call result)" and 15 assertions fail for a
+  // reason that has nothing to do with the module. Measured, on the first
+  // re-run. A cold run never sees it, which is exactly what makes it worth
+  // pinning here rather than in the driver.
+  const run = Math.random().toString(36).slice(2, 8);
+  const sid = (name) => `rt-${run}-${name}`;
+
   notes.push(
     "The PrestaShop return-path suite posts from INSIDE the shop container against the shop's own canonical domain (pinned to loopback with CURLOPT_RESOLVE), so it proves the shop half of the wire only. It does NOT prove the platform can reach a merchant over the internet — that needs a public https origin, as docker-compose.rt.yml provides for WooCommerce."
   );
@@ -306,7 +318,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   });
 
   const wrongSecret = await post({
-    body: fresh('cancelled', 'neg-wrong-secret'),
+    body: fresh('cancelled', sid('neg-wrong-secret')),
     secret: 'not-the-secret',
   });
   rec.record({
@@ -320,7 +332,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   // The pre-2026-09-19 shape: HMAC over the body alone, timestamp riding
   // alongside and unauthenticated — which makes the freshness window
   // decorative, since a captured request replays forever with a fresh one.
-  const bodyOnlyRaw = JSON.stringify(fresh('cancelled', 'neg-body-only'));
+  const bodyOnlyRaw = JSON.stringify(fresh('cancelled', sid('neg-body-only')));
   const bodyOnly = await post({
     body: bodyOnlyRaw,
     signature: await bodyOnlyHmac(bodyOnlyRaw),
@@ -334,7 +346,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   });
 
   const stale = await post({
-    body: fresh('cancelled', 'neg-stale'),
+    body: fresh('cancelled', sid('neg-stale')),
     timestamp: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
   });
   rec.record({
@@ -345,7 +357,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   });
 
   const future = await post({
-    body: fresh('cancelled', 'neg-future'),
+    body: fresh('cancelled', sid('neg-future')),
     timestamp: new Date(Date.now() + 6 * 60 * 1000).toISOString(),
   });
   rec.record({
@@ -355,7 +367,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
     actual: `HTTP ${future.http} ${future.body?.code ?? ''}`,
   });
 
-  const noTs = await post({ body: fresh('cancelled', 'neg-no-ts'), omitTimestamp: true });
+  const noTs = await post({ body: fresh('cancelled', sid('neg-no-ts')), omitTimestamp: true });
   rec.record({
     name: 'a push with no timestamp header is rejected',
     outcome: noTs.http === 401 ? 'PASS' : 'FAIL',
@@ -363,7 +375,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
     actual: `HTTP ${noTs.http} ${noTs.body?.code ?? ''}`,
   });
 
-  const badTs = await post({ body: fresh('cancelled', 'neg-bad-ts'), timestamp: 'not-a-date' });
+  const badTs = await post({ body: fresh('cancelled', sid('neg-bad-ts')), timestamp: 'not-a-date' });
   rec.record({
     name: 'an unparsable timestamp is rejected',
     outcome: badTs.http === 401 ? 'PASS' : 'FAIL',
@@ -371,7 +383,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
     actual: `HTTP ${badTs.http} ${badTs.body?.code ?? ''}`,
   });
 
-  const originalRaw = JSON.stringify(fresh('cancelled', 'neg-tampered'));
+  const originalRaw = JSON.stringify(fresh('cancelled', sid('neg-tampered')));
   const tampered = await post({
     body: originalRaw.replace('"cancelled"', '"confirmed"'),
     signBody: originalRaw,
@@ -401,7 +413,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   });
 
   const unknown = await post({
-    body: { ...fresh('confirmed', 'neg-unknown'), orderId: '99999999' },
+    body: { ...fresh('confirmed', sid('neg-unknown')), orderId: '99999999' },
   });
   rec.record({
     name: 'an order the shop does not have answers 404, not 500',
@@ -414,7 +426,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   // Fail closed. Clear the merchant's signing secret for one request: a shop
   // with no secret must refuse everything rather than accept unsigned pushes.
   await setConfig('VOCIFY_SIGNATURE_SECRET', '');
-  const unconfigured = await post({ body: fresh('confirmed', 'neg-no-secret'), secret: '' });
+  const unconfigured = await post({ body: fresh('confirmed', sid('neg-no-secret')), secret: '' });
   await setConfig('VOCIFY_SIGNATURE_SECRET', secret);
   rec.record({
     name: 'the receiver fails closed when the merchant has no signing secret configured',
@@ -435,7 +447,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
 
   // ── 4. THE HEADLINE: a confirmed call moves the order ────────────────────
   const confirmedAt = iso(-300);
-  const confirmed = await post({ body: fresh('confirmed', 'rt-confirmed', confirmedAt) });
+  const confirmed = await post({ body: fresh('confirmed', sid('rt-confirmed'), confirmedAt) });
   const afterConfirmed = await orderState(orderId);
   rec.record({
     name: "THE HEADLINE: the order's state changed in PrestaShop's own database",
@@ -463,10 +475,10 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
     actual: `${historyRows} row(s)`,
   });
 
-  const note = await noteFor(orderId, 'rt-confirmed');
+  const note = await noteFor(orderId, sid('rt-confirmed'));
   rec.record({
     name: 'the merchant gets a note saying what happened on the call',
-    outcome: note.includes('CONFIRMED') && note.includes('rt-confirmed') ? 'PASS' : 'FAIL',
+    outcome: note.includes('CONFIRMED') && note.includes(sid('rt-confirmed')) ? 'PASS' : 'FAIL',
     expected: 'a stored note naming the outcome and the call id',
     actual: note.slice(0, 160) || '(no note)',
   });
@@ -478,7 +490,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   rec.record({
     name: 'THE NOTE IS VISIBLE: the order page panel renders the call result',
     outcome:
-      panel.includes('Call Results') && panel.includes('CONFIRMED') && panel.includes('rt-confirmed')
+      panel.includes('Call Results') && panel.includes('CONFIRMED') && panel.includes(sid('rt-confirmed'))
         ? 'PASS'
         : 'FAIL',
     expected: "Hook::exec('displayAdminOrderSide') returns the panel, naming the outcome and call id",
@@ -517,7 +529,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   });
 
   // ── 6. idempotency ───────────────────────────────────────────────────────
-  const replay = await post({ body: fresh('cancelled', 'rt-confirmed', confirmedAt) });
+  const replay = await post({ body: fresh('cancelled', sid('rt-confirmed'), confirmedAt) });
   const afterReplay = await orderState(orderId);
   rec.record({
     name: 'a repeat of the same callSid is a no-op, even with a different status',
@@ -531,13 +543,13 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   });
   rec.record({
     name: 'the replay did not record a second call-result row',
-    outcome: (await resultRowsFor(orderId, 'rt-confirmed')) === 1 ? 'PASS' : 'FAIL',
+    outcome: (await resultRowsFor(orderId, sid('rt-confirmed'))) === 1 ? 'PASS' : 'FAIL',
     expected: 'exactly one row for callSid rt-confirmed',
-    actual: `${await resultRowsFor(orderId, 'rt-confirmed')} row(s)`,
+    actual: `${await resultRowsFor(orderId, sid('rt-confirmed'))} row(s)`,
   });
 
   // ── 7. a cancellation really cancels ─────────────────────────────────────
-  const cancel = await post({ body: fresh('cancelled', 'rt-cancelled', iso(-200)) });
+  const cancel = await post({ body: fresh('cancelled', sid('rt-cancelled'), iso(-200)) });
   const afterCancel = await orderState(orderId);
   rec.record({
     name: "outcome 'cancelled' cancels the order in the shop",
@@ -548,7 +560,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   });
 
   // ── 8. an outcome with no purchase-intent meaning ────────────────────────
-  const noAnswer = await post({ body: fresh('no_answer', 'rt-no-answer', iso(-100)) });
+  const noAnswer = await post({ body: fresh('no_answer', sid('rt-no-answer'), iso(-100)) });
   const afterNoAnswer = await orderState(orderId);
   rec.record({
     name: "an outcome with no purchase-intent meaning ('no_answer') notes but does not move the order",
@@ -563,9 +575,9 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   });
   rec.record({
     name: "a 'no_answer' is still recorded for the merchant to see",
-    outcome: (await noteFor(orderId, 'rt-no-answer')).includes('NO ANSWER') ? 'PASS' : 'FAIL',
+    outcome: (await noteFor(orderId, sid('rt-no-answer'))).includes('NO ANSWER') ? 'PASS' : 'FAIL',
     expected: 'a stored note naming the outcome',
-    actual: (await noteFor(orderId, 'rt-no-answer')).slice(0, 160) || '(no note)',
+    actual: (await noteFor(orderId, sid('rt-no-answer'))).slice(0, 160) || '(no note)',
   });
   rec.record({
     name: "the 'no_answer' note reaches the order page, not just the database",
@@ -582,7 +594,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
   // and the platform retries a failed sync five times, so a delayed retry of
   // the FIRST call can land after the second has been applied. Deduping on
   // callSid alone does not catch it: the sid is new.
-  const stalePush = await post({ body: fresh('confirmed', 'rt-old-call', iso(-3600)) });
+  const stalePush = await post({ body: fresh('confirmed', sid('rt-old-call'), iso(-3600)) });
   const afterStalePush = await orderState(orderId);
   rec.record({
     name: 'an older result from a DIFFERENT call cannot rewind the order',
@@ -611,7 +623,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
     body: {
       orderId: String(renamedOrder),
       status: 'confirmed',
-      callData: { callSid: 'rt-renamed-state', duration: 9, completedAt: iso(-30) },
+      callData: { callSid: sid('rt-renamed-state'), duration: 9, completedAt: iso(-30) },
     },
   });
   const renamedState = await orderState(renamedOrder);
@@ -634,7 +646,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
     body: {
       orderId: String(repointedOrder),
       status: 'confirmed',
-      callData: { callSid: 'rt-repointed', duration: 9, completedAt: iso(-30) },
+      callData: { callSid: sid('rt-repointed'), duration: 9, completedAt: iso(-30) },
     },
   });
   const repointedState = await orderState(repointedOrder);
@@ -654,7 +666,7 @@ export async function runPrestaShopReturnSuite({ rec, secret, notes }) {
     body: {
       orderId: String(orphanOrder),
       status: 'confirmed',
-      callData: { callSid: 'rt-deleted-state', duration: 9, completedAt: iso(-30) },
+      callData: { callSid: sid('rt-deleted-state'), duration: 9, completedAt: iso(-30) },
     },
   });
   const orphanState = await orderState(orphanOrder);

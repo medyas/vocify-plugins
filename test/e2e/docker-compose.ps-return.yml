@@ -15,17 +15,27 @@
 # one `container_name` is a "port/name is already allocated" failure, which is
 # how the inbound stack lost its published port.
 #
-# ⚠️ Unlike `docker-compose.rt.yml` there is NO cloudflared tunnel here. The
-# receiver is exercised over `http://localhost/` from INSIDE the container, so
-# what this stack proves is everything on the shop side of the wire: that the
-# PrestaShop dispatcher routes to the module front controller, that the HMAC
-# verifies against really-transmitted bytes, that the rejection matrix answers
-# the right codes, and that the order moves in PrestaShop's own MySQL. It
-# proves nothing about the platform reaching a merchant over the internet —
-# that leg needs a public https origin and is what `docker-compose.rt.yml`
-# exists for. Installing PrestaShop against a hostname that is only known
-# after cloudflared has started means rewriting `ps_shop_url` post-install,
-# which WordPress does not need and PrestaShop is far fussier about.
+# The stack carries a cloudflared quick tunnel, so BOTH legs can be proven
+# against one shop:
+#
+#   * `suites/ps-return.mjs` posts from INSIDE the container against the shop's
+#     own canonical domain — the dispatcher, the controller, the HMAC, the
+#     rejection matrix, the state change in MySQL;
+#   * `suites/ps-internet.mjs` has the DEPLOYED platform on the OVH VPS push a
+#     completed call across the public internet into that same shop.
+#
+# ⚠️ PrestaShop cannot be installed against the tunnel hostname the way
+# WordPress is in `docker-compose.rt.yml`, because a quick tunnel's hostname
+# only exists after cloudflared has connected — which is after the entrypoint's
+# PS_INSTALL_AUTO has already run. The shop is therefore installed against
+# `PS_DOMAIN` below and REPOINTED afterwards; `run-ps-return.mjs`'s
+# `repointShopAtTunnel()` documents exactly which rows that takes and why the
+# cache has to be dropped with them.
+#
+# That repointing is not optional cosmetics: `Shop::initialize()` answers
+# `302 Location: <canonical>` to any request whose Host does not match the
+# configured shop URL, BEFORE the module front controller runs, and the
+# platform's adapter fetches with `redirect: 'error'`.
 name: vocify-e2e-ps-rt
 
 services:
@@ -80,4 +90,19 @@ services:
       - /var/www/html/modules/vocifyai/vendor
     extra_hosts:
       - 'host.docker.internal:host-gateway'
+    restart: 'no'
+
+  # The shop's public origin. A quick tunnel needs no Cloudflare account and
+  # gives a real hostname with real TLS, which is the only thing that lets the
+  # platform's SSRF guard (`assertSafeExternalUrl`) pass a shop running on this
+  # laptop. That guard is never relaxed, patched or bypassed by this harness.
+  #
+  # It terminates TLS and forwards plain http to Apache, so the shop sees
+  # `http` while the world sees `https`. That asymmetry is exactly what makes
+  # `PS_SSL_ENABLED` dangerous here — see repointShopAtTunnel().
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: vocify-e2e-psrt-tunnel
+    depends_on: [prestashop]
+    command: tunnel --no-autoupdate --url http://prestashop:80
     restart: 'no'

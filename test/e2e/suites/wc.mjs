@@ -288,6 +288,12 @@ export async function runWooCommerceSuite({ rec, sql, fixture, webhookUrl, notes
       ok('Attempt.status is pending', a.status === 'pending', 'pending', a.status);
       ok('Attempt.attempt_number is 1', a.attempt_number === 1, '1', String(a.attempt_number));
       ok(
+        'Attempt.customer_phone is the Order.phone the plugin sent (customerPhone field-name contract)',
+        a.customer_phone === o.phone,
+        o.phone,
+        a.customer_phone
+      );
+      ok(
         'Attempt.credits_held is the call credit cost',
         a.credits_held === fixture.callCreditCost,
         String(fixture.callCreditCost),
@@ -410,6 +416,60 @@ export async function runWooCommerceSuite({ rec, sql, fixture, webhookUrl, notes
       401,
       undefined,
       'HTTP 401'
+    );
+
+    // The remaining two are only exercised elsewhere as a hand-built fixture
+    // in the preflight contract probe (orchestrate.mjs), which the README
+    // states explicitly never counts as plugin evidence. These replay the
+    // SAME bytes the shipped plugin signed (`cap`), so they prove the
+    // deployed platform rejects the plugin's own unsigned/incomplete
+    // traffic, not a synthetic request shaped by the harness. Expected codes
+    // read out of platform/src/lib/auth/api-key.ts and
+    // platform/src/lib/validations/unified-webhook.schema.ts, not guessed.
+    await expectReject(
+      'unsigned request (X-Signature stripped from the plugin\'s own bytes) is rejected',
+      ({ headers, body }) => {
+        const h = { ...headers };
+        delete h['X-Signature'];
+        return { headers: h, body };
+      },
+      401,
+      'SIGNATURE_MISMATCH',
+      'HTTP 401 SIGNATURE_MISMATCH (fail-closed on a missing signature)'
+    );
+
+    await expectReject(
+      'missing X-Timestamp header (correctly signed body, timestamp entirely absent) is rejected',
+      ({ headers, body }) => {
+        const h = { ...headers };
+        delete h['X-Timestamp'];
+        return { headers: h, body };
+      },
+      // The "missing signature" branch in authenticateApiKey() only fires on
+      // `!signature`, so a present-but-unbound signature falls through to the
+      // timestamp check — TIMESTAMP_INVALID, not SIGNATURE_MISMATCH — before
+      // the HMAC is ever recomputed.
+      401,
+      'TIMESTAMP_INVALID',
+      'HTTP 401 TIMESTAMP_INVALID (timestamp is mandatory, not just bound into the digest)'
+    );
+
+    // A missing X-API-Key is a DIFFERENT branch than the wrong-but-present key
+    // above: `x-api-key` is a required (non-optional) field in
+    // webhookHeadersSchema, so its absence fails header validation itself
+    // (HTTP 400) before authenticateApiKey() ever runs — never the 401 an
+    // invalid value gets. Asserted directly (not via expectReject) because
+    // the response carries no `code` field for this branch.
+    const noApiKey = await replay(cap, webhookUrl, ({ headers, body }) => {
+      const h = { ...headers };
+      delete h['X-API-Key'];
+      return { headers: h, body };
+    });
+    ok(
+      'missing X-API-Key header is rejected at header validation (HTTP 400, not 401)',
+      noApiKey.status === 400,
+      'HTTP 400 "Invalid headers" — a different code path than an invalid-but-present key',
+      `HTTP ${noApiKey.status} ${JSON.stringify(noApiKey.body).slice(0, 140)}`
     );
 
     // A verbatim replay INSIDE the freshness window is not an error and must

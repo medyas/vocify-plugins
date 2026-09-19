@@ -67,7 +67,7 @@ const ordersFor = (sql, companyId, externalId) =>
   sql
     .query(
       `SELECT id, external_id, external_platform::text AS platform, agent_id, company_id,
-              phone, customer_name, currency, status::text
+              phone, customer_name, currency, total::text AS total, status::text
          FROM orders WHERE company_id = $1 AND external_id = $2`,
       [companyId, externalId]
     )
@@ -76,7 +76,7 @@ const ordersFor = (sql, companyId, externalId) =>
 const attemptsFor = (sql, orderId) =>
   sql
     .query(
-      `SELECT status, attempt_number, credits_held,
+      `SELECT status, attempt_number, credits_held, customer_phone,
               to_char(scheduled_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS scheduled_at,
               (scheduled_at > (now() AT TIME ZONE 'utc') + interval '1 hour') AS far_future
          FROM attempts WHERE order_id = $1 ORDER BY attempt_number`,
@@ -84,7 +84,7 @@ const attemptsFor = (sql, orderId) =>
     )
     .then((r) => r.rows);
 
-export async function runPrestaShopSuite({ rec, sql, fixture, webhookUrl, notes }) {
+export async function runPrestaShopSuite({ rec, sql, fixture, webhookUrl, notes, slowReplay }) {
   const ok = (name, cond, expected, actual, extra = {}) =>
     cond ? rec.pass(name, { actual, ...extra }) : rec.fail(name, { expected, actual, ...extra });
 
@@ -150,6 +150,19 @@ export async function runPrestaShopSuite({ rec, sql, fixture, webhookUrl, notes 
     String(cap.headers['X-Domain'])
   );
   ok('X-Platform is PRESTASHOP', cap.headers['X-Platform'] === 'PRESTASHOP', 'PRESTASHOP', String(cap.headers['X-Platform']));
+  ok(
+    'X-API-Key is the provisioned key',
+    cap.headers['X-API-Key'] === fixture.apiKey,
+    'the fixture API key',
+    cap.headers['X-API-Key'] === fixture.apiKey ? 'matches' : 'differs'
+  );
+  const skewMs = Math.abs(Date.now() - new Date(cap.headers['X-Timestamp']).getTime());
+  ok(
+    'X-Timestamp parses and is inside the 300s freshness window',
+    Number.isFinite(skewMs) && skewMs < 300_000,
+    'a parseable ISO 8601 timestamp within 300s',
+    Number.isFinite(skewMs) ? `${(skewMs / 1000).toFixed(1)}s skew` : 'unparseable'
+  );
   const expectedSig = sign(fixture.signatureSecret, cap.headers['X-Timestamp'], cap.body);
   ok(
     'X-Signature == HMAC-SHA256(secret, `${X-Timestamp}.${rawBody}`) recomputed independently',
@@ -193,11 +206,39 @@ export async function runPrestaShopSuite({ rec, sql, fixture, webhookUrl, notes 
     ok('Order.agent_id is the provisioned agent', o.agent_id === fixture.agentId, fixture.agentId, o.agent_id);
     ok('Order.phone is the customer phone the module sent', o.phone === '+21600000000', '+21600000000', o.phone);
     ok('Order.customer_name survived the transform', o.customer_name === 'Amina Ben Ali', 'Amina Ben Ali', o.customer_name);
+    // Not hardcoded against a fixed number: unlike the WooCommerce suite (a
+    // product it provisions itself with a known SKU/price), this order's total
+    // comes from prestashop/prestashop:8-apache's built-in demo catalogue
+    // (create-order.php picks the first active product), whose price is not a
+    // constant this harness owns. Cross-checking the DB row against the bytes
+    // the module actually signed proves the same thing — money survives the
+    // round trip unchanged — without depending on an undocumented fixture price.
+    ok('Order.currency matches the signed payload', o.currency === payload.currency, payload.currency, o.currency);
+    // Tolerance, not exact equality: the module reads PrestaShop's
+    // decimal(20,6) total_paid and casts it through PHP float -> JSON, and
+    // Postgres stores it at its own column scale. Neither side of that trip
+    // is a value this harness controls (the demo-catalogue price isn't
+    // fixed), so a sub-cent float/rounding difference is a storage-precision
+    // fact, not a money bug, and must not fail the run.
+    ok(
+      'Order.total matches the signed payload total (within 0.005)',
+      Math.abs(Number(o.total) - payload.totals.total) < 0.005,
+      String(payload.totals.total),
+      o.total
+    );
     ok('Order.status is SCHEDULED (a credit was reserved)', o.status === 'SCHEDULED', 'SCHEDULED', o.status);
 
     const attempts = await attemptsFor(sql, o.id);
     ok('exactly one Attempt row was created', attempts.length === 1, '1 attempts row', `${attempts.length}`);
     if (attempts.length === 1) {
+      ok('Attempt.status is pending', attempts[0].status === 'pending', 'pending', attempts[0].status);
+      ok('Attempt.attempt_number is 1', attempts[0].attempt_number === 1, '1', String(attempts[0].attempt_number));
+      ok(
+        'Attempt.customer_phone is the Order.phone the module sent (customerPhone field-name contract)',
+        attempts[0].customer_phone === o.phone,
+        o.phone,
+        attempts[0].customer_phone
+      );
       ok('Attempt.credits_held is the call credit cost', attempts[0].credits_held === fixture.callCreditCost, String(fixture.callCreditCost), String(attempts[0].credits_held));
       ok(
         'SAFETY: Attempt.scheduled_at is far in the future (closed calling window — nothing can dial)',
@@ -283,6 +324,51 @@ export async function runPrestaShopSuite({ rec, sql, fixture, webhookUrl, notes 
     401, undefined, 'HTTP 401'
   );
 
+  // The remaining two are only exercised elsewhere as a hand-built fixture in
+  // the preflight contract probe (orchestrate.mjs), which the README states
+  // explicitly never counts as plugin evidence. These replay the SAME bytes
+  // the shipped module signed (`cap`), so they prove the deployed platform
+  // rejects the module's own unsigned/incomplete traffic, not a synthetic
+  // request shaped by the harness.
+  await expectReject(
+    'unsigned request (X-Signature stripped from the module\'s own bytes) is rejected',
+    ({ headers, body }) => {
+      const h = { ...headers };
+      delete h['X-Signature'];
+      return { headers: h, body };
+    },
+    401, 'SIGNATURE_MISMATCH', 'HTTP 401 SIGNATURE_MISMATCH (fail-closed on a missing signature)'
+  );
+  await expectReject(
+    'missing X-Timestamp header (correctly signed body, timestamp entirely absent) is rejected',
+    ({ headers, body }) => {
+      const h = { ...headers };
+      delete h['X-Timestamp'];
+      return { headers: h, body };
+    },
+    // Checked in platform/src/lib/auth/api-key.ts: the "missing signature"
+    // branch only fires on `!signature`, so a present-but-unbound signature
+    // falls through to the timestamp check — TIMESTAMP_INVALID, not
+    // SIGNATURE_MISMATCH — before the HMAC is ever recomputed.
+    401, 'TIMESTAMP_INVALID', 'HTTP 401 TIMESTAMP_INVALID (timestamp is mandatory, not just bound into the digest)'
+  );
+  // A missing X-API-Key is a DIFFERENT branch than the wrong-but-present key
+  // above: `x-api-key` is a required (non-optional) field in
+  // platform/src/lib/validations/unified-webhook.schema.ts's header schema,
+  // so its absence fails header validation itself (HTTP 400) before
+  // authenticateApiKey() ever runs — never the 401 an invalid value gets.
+  const noApiKey = await replay(cap, webhookUrl, ({ headers, body }) => {
+    const h = { ...headers };
+    delete h['X-API-Key'];
+    return { headers: h, body };
+  });
+  ok(
+    'missing X-API-Key header is rejected at header validation (HTTP 400, not 401)',
+    noApiKey.status === 400,
+    'HTTP 400 "Invalid headers" — a different code path than an invalid-but-present key',
+    `HTTP ${noApiKey.status} ${JSON.stringify(noApiKey.body).slice(0, 140)}`
+  );
+
   const inWindow = await replay(cap, webhookUrl);
   ok(
     'verbatim replay inside the 300s window is idempotent (HTTP 200, no new order)',
@@ -290,6 +376,36 @@ export async function runPrestaShopSuite({ rec, sql, fixture, webhookUrl, notes 
     'HTTP 200 "Order already processed"',
     `HTTP ${inWindow.status}`
   );
+  ok(
+    'replay created no second Order row',
+    (await ordersFor(sql, fixture.companyId, String(order.id))).length === 1,
+    '1 orders row',
+    'checked'
+  );
+
+  if (slowReplay) {
+    const capturedAt = new Date(cap.headers['X-Timestamp']).getTime();
+    const waitMs = capturedAt + 301_000 - Date.now();
+    if (waitMs > 0) {
+      process.stdout.write(`  ...waiting ${(waitMs / 1000).toFixed(0)}s to replay the captured request outside the freshness window\n`);
+      await sleep(waitMs);
+    }
+    const late = await replay(cap, webhookUrl);
+    ok(
+      'GENUINE replay of the captured request after the 300s window is rejected',
+      late.status === 401 && late.body?.code === 'TIMESTAMP_INVALID',
+      'HTTP 401 TIMESTAMP_INVALID',
+      `HTTP ${late.status} ${late.body?.code ?? ''}`
+    );
+  } else {
+    rec.skip(
+      'GENUINE replay of the captured request after the 300s window',
+      'needs ~5 minutes of wall clock; run with --slow-replay. The crafted stale-timestamp assertion above covers the same platform branch'
+    );
+    notes.push(
+      'The PrestaShop verbatim >300s replay assertion was skipped (`--slow-replay` not set). Its platform branch is still covered by the crafted stale-timestamp case.'
+    );
+  }
 
   // ═══════════════════════════════════════════════════════════════════════
   rec.group('ps/negative — the module refuses to send (no request leaves)');
@@ -324,6 +440,36 @@ export async function runPrestaShopSuite({ rec, sql, fixture, webhookUrl, notes 
   }
   await setConfig('VOCIFY_WEBHOOK_URL', webhookUrl);
 
+  // The module's own validator mirrors the platform's Zod schema (see
+  // classes/VocifyPayloadValidator.php) so it fails fast on a missing phone
+  // rather than round-tripping to a platform 400. Both the delivery hook
+  // (`actionValidateOrder`) and the immediate status hook fire regardless of
+  // payload validity, so this can legitimately log more than one error row.
+  await clearLogs();
+  const noPhoneOrder = await placeOrder('');
+  await sleep(1500);
+  const noPhoneState = await moduleState();
+  const noPhoneLogs = noPhoneState.logs.filter((l) => String(l.id_order) === String(noPhoneOrder.id));
+  ok(
+    'order with no phone: the module validates locally and sends nothing',
+    // http_code=0 is what sendOrder() logs for a LOCAL validation failure
+    // (VocifyWebhookService.php:151) — distinct from any http_code an actual
+    // HTTP response would carry — so this measures "no request left the
+    // container", not just "an error was logged for some reason".
+    noPhoneLogs.some(
+      (l) => l.status === 'error' && String(l.http_code) === '0' && /customer\.phone is required/i.test(String(l.response))
+    ),
+    'an error row, http_code=0, naming the missing phone (local validator, not a platform 400)',
+    noPhoneLogs.length ? `${noPhoneLogs[0].status} http_code=${noPhoneLogs[0].http_code}: ${String(noPhoneLogs[0].response).slice(0, 140)}` : 'no log row',
+    { suspect: 'prestashop/classes/VocifyPayloadValidator.php' }
+  );
+  ok(
+    'order with no phone: no Order row was created',
+    (await ordersFor(sql, fixture.companyId, String(noPhoneOrder.id))).length === 0,
+    '0 orders rows',
+    'checked'
+  );
+
   // Wrong API key, driven end-to-end through the module.
   await clearLogs();
   await setConfig('VOCIFY_API_KEY', `vcf_live_${'0'.repeat(64)}`);
@@ -336,6 +482,26 @@ export async function runPrestaShopSuite({ rec, sql, fixture, webhookUrl, notes 
     badKeyLogs.some((l) => String(l.http_code) === '401'),
     'a log row with http_code 401',
     badKeyLogs.length ? `http_code=${badKeyLogs[0].http_code}` : 'nothing sent'
+  );
+  // Log-row COUNT alone is not a safe signal here the way it is for
+  // WooCommerce: one PrestaShop order fires two hooks back to back (see the
+  // documented 201+200 pair above), so a wrong key legitimately produces two
+  // 401 log rows without any retry logic being involved — asserting
+  // length===1 would fail for the WRONG reason. Read instead of assumed:
+  // VocifyWebhookService.php:452 (sendWebhookWithRetry) returns on the FIRST
+  // attempt for any 4xx, before the exponential-backoff sleep() and before
+  // addToFailedQueue() — that call is only reachable after MAX_RETRIES is
+  // exhausted on a 5xx/exception. So for THIS order, every logged http_code
+  // being 401 (never a retry-induced different code) plus an empty retry
+  // queue is what the code structurally guarantees for a 4xx, not merely
+  // what an absent queue row hints at.
+  ok(
+    'wrong API key: the module does not retry the 4xx (client errors are terminal)',
+    badKeyLogs.length > 0 &&
+      badKeyLogs.every((l) => String(l.http_code) === '401') &&
+      !badKeyState.failed.some((f) => String(f.id_order) === String(badKeyOrder.id)),
+    'every log row for this order is a single-attempt HTTP 401, and no retry-queue row',
+    `${badKeyLogs.length} row(s), codes ${JSON.stringify(badKeyLogs.map((l) => l.http_code))}; failed-queue rows overall: ${badKeyState.failed.length}`
   );
   ok(
     'wrong API key: no Order row was created',

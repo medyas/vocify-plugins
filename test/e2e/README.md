@@ -26,17 +26,26 @@ Flags: `--only wc|ps|rt`, `--keep-up`, `--keep-fixture`, `--skip-build`,
 |---|---|---|
 | shop → platform | `suites/wc.mjs`, `suites/ps.mjs` | a real order fires the plugin's hook, the shipped PHP signs it, the platform stores it |
 | **platform → shop** | `suites/wc-return.mjs` | **a completed call changes the order's status in the shop's own MySQL** |
-| **platform → shop** | `suites/ps-return.mjs` | **the same, for PrestaShop — shop side of the wire only (see below)** |
+| **platform → shop** | `suites/ps-return.mjs` | the shop half of the PrestaShop wire — dispatcher, controller, HMAC, state change |
+| **platform → shop** | `suites/ps-internet.mjs` | **the DEPLOYED platform reaching a PrestaShop shop across the public internet** |
 
 The PrestaShop return-path suite has its own driver, `./run-ps-return.sh` (flags `--keep-up`,
 `--reuse`), and is deliberately NOT part of `orchestrate.mjs`. The orchestrator's whole preamble —
 contract probe, tenant fixture, dialable-attempt safety gate — exists because its suites write to
 the platform's live Postgres. `ps-return.mjs` writes nothing there: it posts call results straight
 to the shop, the way the platform's outbound adapter would, so it needs no tenant, no database and
-no safety gate. It also needs no tunnel: requests are made from inside the container against the
-shop's own canonical domain pinned to loopback. **The cost of that is worth stating plainly — it
-proves the shop half of the wire, not that the platform can reach a merchant over the internet.**
-Folding it in as a fourth `--only` target is a reasonable next step.
+no safety gate. `ps-internet.mjs` does need all three, and runs second; `--skip-internet` leaves it
+out, which keeps the shop-side assertions runnable with the platform, Postgres and the VPS all down.
+
+Both run against ONE shop, published by a `cloudflared` quick tunnel in the same compose file.
+**PrestaShop cannot be installed against the tunnel hostname the way WordPress is** — `PS_INSTALL_AUTO`
+runs from the container entrypoint, before cloudflared has a hostname — so the shop is installed
+against a placeholder and moved afterwards by `ps/repoint-shop.php`. That file carries the measured
+table of which rows this actually needs; the short answer is **`ps_shop_url.domain`/`domain_ssl` on
+the `main` row, and nothing else**. `PS_SHOP_DOMAIN`, `physical_uri` and a cache clear were all
+assumed necessary and measured not to be.
+
+Folding both in as `--only` targets of `orchestrate.mjs` is a reasonable next step.
 
 The return-path suite runs against its own stack (`docker-compose.rt.yml`, project
 `vocify-e2e-rt`, port 58081) for a reason the inbound suites do not have: the
@@ -120,7 +129,7 @@ run.sh / run.cmd         entry points (wrap orchestrate.mjs in platform's tsx)
 docker-compose.wc.yml    MariaDB + WordPress; plugin bind-mounted read-only
 docker-compose.ps.yml    MySQL + PrestaShop 8; module bind-mounted read-only
 docker-compose.rt.yml    return-path shop + cloudflared quick tunnel (public https origin)
-docker-compose.ps-return.yml  PrestaShop return-path shop (own project + container names)
+docker-compose.ps-return.yml  PrestaShop return-path shop + quick tunnel (own project + names)
 run-ps-return.sh / .mjs  standalone driver for suites/ps-return.mjs
 rt/run-platform-sync.mts one tick of the platform's own syncCompletedOrders()
 fixtures/
@@ -131,7 +140,9 @@ lib/                     Postgres access, docker wrappers, report emitter
 suites/wc.mjs            WooCommerce assertions (shop → platform)
 suites/wc-return.mjs     RETURN path assertions (platform → shop)
 suites/ps.mjs            PrestaShop assertions
-suites/ps-return.mjs     PrestaShop RETURN path assertions
+suites/ps-return.mjs     PrestaShop RETURN path assertions (shop side of the wire)
+suites/ps-internet.mjs   PrestaShop RETURN path over the public internet
+ps/repoint-shop.php      move an installed shop onto the tunnel hostname
 wc/                      WP-CLI provisioning, order fixtures, capture mu-plugin
 ps/                      PrestaShop provisioning, validateOrder() fixture, helpers
 ```
@@ -193,6 +204,17 @@ is merely slow.
   container into it and EVERY request 500s with
   `Cannot rename "/tmp/FrontContainer.php…"`. The inbound suites never noticed,
   because they make no HTTP request to the shop.
+- **PrestaShop behind a tunnel**: `Shop::initialize()` answers
+  `302 Location: <canonical>` to any request whose Host is not in
+  `ps_shop_url`, BEFORE the module controller runs — and the platform's adapter
+  fetches with `redirect: 'error'`, so that is a hard delivery failure, not a
+  retry. Repointing is therefore not cosmetic. It is also a real merchant trap:
+  `integrations.store_url` has to be the shop's canonical domain.
+- **Fixed `callSid`s are not re-runnable.** `vocify_call_results.call_sid` is
+  UNIQUE and GLOBAL, so a second run against the same shop answers every push
+  "Already applied" and a suite with hardcoded sids fails 15 assertions for a
+  reason unrelated to the module. `ps-return.mjs` prefixes every sid with a
+  per-run token. A cold run never sees this, which is why it survived one.
 
 Every `docker` invocation in a polling loop carries a per-exec timeout for the
 same reason.

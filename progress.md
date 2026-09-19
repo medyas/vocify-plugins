@@ -1,7 +1,7 @@
 # Vocify CMS Plugins - Development Progress
 
 **Last Updated**: 2026-09-19
-**Version**: WooCommerce 1.1.0 / **PrestaShop 1.2.0** — the 2026-09-18 pentest fixes (§6), the 2026-09-19 HMAC timestamp-binding fix (§7), the four e2e-found bugs of §8, the WooCommerce receiver (§9) and the PrestaShop receiver (§10) are all in the working tree, commit pending
+**Version**: WooCommerce 1.1.0 / **PrestaShop 1.2.0** — the 2026-09-18 pentest fixes (§6), the 2026-09-19 HMAC timestamp-binding fix (§7), the four e2e-found bugs of §8, the WooCommerce receiver (§9), the PrestaShop receiver (§10) and its public-internet proof (§11) are all in the working tree; §6-§10 are committed at `6b7c738`, §11 is pending
 **Branch:** `main` (trunk — decided by the owner 2026-08-16; the old `vocify-v2` gate is retired and the branch was never created here. Work lands on `main` or a short-lived feature branch, pushed to origin.)
 
 > **Update rule (enforced by CLAUDE.md):** this file is the single source of truth for plugin status. Mark a feature 🚧 when you start it; before claiming any feature done, set its row to ✅ with a note, in the same turn as the work. Plugins have no v2 spec rewrite — the webhook contract in `claude.md` is stable; the platform's switch to synchronous intake + LiveKit is invisible to plugins.
@@ -317,15 +317,12 @@ unchanged by the status change the receiver makes.
 |---|---|
 | `php -l` | ✅ 11/11 clean (php 8.2-cli in Docker), including the two new files and the upgrade script |
 | PHPUnit | ✅ **68 tests / 173 assertions**, up from 35/79. The 35 pre-existing tests still pass; the 33 new ones cover every rejection branch (unconfigured secret → 503, missing signature/timestamp, unparsable and stale and future timestamps, wrong secret, body tampered after signing, body-only signature, signature bound to a different timestamp, non-JSON body, missing orderId/status), idempotency, the ordering guard, and the mapping |
-| **e2e, cold run against PrestaShop 8.2.8** | ✅ **35 passed, 0 failed, 0 skipped, 0 blocked** — `run-ps-return.sh`, from an empty database through a real `PaymentModule::validateOrder()` order, over real HTTP through Apache and PrestaShop's real dispatcher. Headline: `ps_orders.current_state` 2 → 3, read straight from MySQL. Includes three assertions that the note actually **renders** on the order page, via `Hook::exec` |
+| **e2e, cold run against PrestaShop 8.2.8** | ✅ **48 passed, 0 failed, 0 skipped, 0 blocked** — `run-ps-return.sh`, from an empty database, two legs (§11). 35 shop-side assertions through a real `PaymentModule::validateOrder()` order, real HTTP, Apache and PrestaShop's real dispatcher; 13 internet-leg assertions driven by the **deployed platform on the OVH VPS**. Headline: `ps_orders.current_state` 2 → 3, read straight from MySQL |
 | Upgrade path 1.1.0 → 1.2.0 | ✅ Simulated on the live container (drop the table, delete the config, **unregister `displayAdminOrderSide`**, pin `module.version` to 1.1.0): `needsUpgrade=true`, `runUpgradeModule()` `success=true upgraded_to=1.2.0`, table recreated, mapping seeded 3/6/5, hook registered, version bumped — and a push right afterwards returned `200 {"changed":true}` with the panel rendering 5417 bytes |
 | Platform `tsc --noEmit` after the adapter comment edit | ✅ exit 0 |
 
-**What is NOT proven:** the internet leg. This suite posts from inside the container against the
-shop's own canonical domain pinned to loopback, so it proves the whole shop half of the wire and
-nothing about the platform reaching a merchant. That needs a public https origin, which is what
-`docker-compose.rt.yml`'s cloudflared tunnel provides for WooCommerce; a PrestaShop equivalent means
-rewriting `ps_shop_url` after the tunnel hostname is known, and was not built here.
+**The internet leg is now proven too — see §11.** When this section was first written it was not,
+and the paragraph here said so; that gap is closed.
 
 ### Traps found along the way (all in the harness, none in the module)
 
@@ -346,8 +343,8 @@ rewriting `ps_shop_url` after the tunnel hostname is known, and was not built he
 
 ### Still open
 
-1. 🟡 A PrestaShop equivalent of `docker-compose.rt.yml` (tunnel + `ps_shop_url` rewrite) would
-   close the last gap — the platform actually reaching a PrestaShop merchant over the internet.
+1. ✅ **DONE (§11)** — the tunnel + `ps_shop_url` repoint exists, and the deployed platform has
+   been measured pushing a call result into a PrestaShop shop across the public internet.
 2. 🟡 `suites/ps-return.mjs` is driven by its own runner, not `orchestrate.mjs`. Folding it in as a
    fourth `--only` target is a small change to a shared file and was left to its owner.
 3. 🟡 The WooCommerce receiver still has no PHPUnit coverage (§9 item 4). The PrestaShop split —
@@ -356,6 +353,121 @@ rewriting `ps_shop_url` after the tunnel hostname is known, and was not built he
 4. ⏳ Commit + push on `main` — deliberately **not** committed; the lead reviews the working tree.
 
 The e2e stack was torn down (`down -v`); no `vocify-e2e-*` container is left running.
+
+---
+
+## 11. PrestaShop return path over the PUBLIC INTERNET (2026-09-19) ✅ measured — ⏳ commit pending
+
+**Closes §10 "Still open" item 1.** §10 proved the shop half of the wire by posting from inside the
+container. This proves the other half: the **deployed platform on the OVH VPS** reaching a
+PrestaShop shop across the public internet and being accepted — the same shape as the WooCommerce
+suite's "the DEPLOYED platform can push this call to the shop" + "THE HEADLINE" pair.
+
+**Result: 48 passed, 0 failed, 0 skipped, 0 blocked** on a cold run from an empty database
+(35 shop-side, 13 internet-leg). Nothing in the module changed; this is harness work plus one
+measured correction to §10's documentation.
+
+### What the internet leg actually exercises
+
+```
+an order placed in a REAL shop (PaymentModule::validateOrder())
+  → the module's outbound hook, signed by the shipped PHP
+  → the DEPLOYED platform at https://162-19-32-251.sslip.io   → orders + attempts rows
+  → a synthesised completed Call                              → NO phone dialled
+  → POST /api/internal/sync-ecommerce on the DEPLOYED platform
+  → the platform's PrestaShop outbound adapter (HMAC + HTTPS)
+  → Cloudflare quick tunnel                                   ← THE PUBLIC INTERNET
+  → VocifyAIWebhookModuleFrontController
+  → ps_orders.current_state 2 → 3
+```
+
+Measured evidence from the cold run:
+
+```
+deployed cron tick           HTTP 200 {"synced":1,"failed":0}
+shop access log              172.18.0.4 - D2C5CE0C6C8DD51DC9B9A9768228354D
+                             "POST /index.php?fc=module&module=vocifyai&controller=webhook" 200
+calls row                    {"outcome":"confirmed","sync_status":"synced","synced_at":"...T17:46:55.118Z"}
+ps_orders.current_state      2 → 3
+```
+
+`172.18.0.4` is the cloudflared container — everything the shop-side suite does logs `127.0.0.1`, so
+a non-loopback source is proof the request came in from outside. `D2C5CE0C…` is stronger still: it is
+the Basic-auth **username**, which only the platform's PrestaShop adapter sends
+(`getBasicAuthHeader()` → `credentials.apiKey`). The harness never sends that header, so the line
+identifies the request as the platform adapter's rather than merely as "something external". Both
+are assertions, not observations.
+
+### ⚠️ The deployed VPS build is NEWER than platform/PROGRESS.md:1750 says
+
+That line reads *"Not deployed. The VPS runs the previous build, so production still pushes
+nothing."* **Stale as of 2026-09-19.** The internet leg passed on its FIRST attempt with
+**production-shaped credentials** — `integrations.credentials` holding only `{apiKey}`, with the URL
+left in the `store_url` column exactly as the integration wizard writes it. That only works if the
+deployed build has `adapterCredentials()` from platform commit `4b51231`; without it
+`assertSafeExternalUrl(undefined)` throws in the adapter constructor and nothing leaves the Worker.
+The suite carries a fallback that supplies `storeUrl` inside `credentials` to isolate a stale build
+from a PrestaShop problem — it was never needed.
+
+### What the repoint actually requires — measured, and smaller than assumed
+
+PrestaShop cannot be installed against the tunnel hostname the way WordPress is: `PS_INSTALL_AUTO`
+runs from the container entrypoint, before cloudflared has a hostname. So the shop is installed
+against a placeholder and moved afterwards. The brief listed `ps_shop_url` (`domain`, `domain_ssl`,
+`physical_uri`), `PS_SHOP_DOMAIN` / `PS_SHOP_DOMAIN_SSL`, and a cache clear. **Three of those five
+turned out to be unnecessary.**
+
+| Change | Required? | Evidence |
+|---|---|---|
+| `ps_shop_url.domain` / `domain_ssl` on the **`main`** row | ✅ **YES — and alone it is enough** | Before: `POST` to the tunnel → `302 Location: https://ps-rt.vocify.test/?fc=module…`, before any controller runs; the adapter fetches with `redirect: 'error'`, so that is a hard delivery failure. After this UPDATE **with `--skip-config --skip-cache`**: the module front controller ran and answered its own JSON. `Shop::initialize()` → `findShopByHost()` is `WHERE su.domain = ? OR su.domain_ssl = ?` (classes/shop/Shop.php:1359) |
+| `PS_SHOP_DOMAIN` / `PS_SHOP_DOMAIN_SSL` | ❌ **NO** | Assumed necessary for the outbound `X-Domain` and **measured wrong**: with both left at the stale placeholder, an order still reached the platform with **HTTP 201**. `Tools::getShopDomainSsl()` does not read `ps_configuration` — it calls `ShopUrl::getMainShopDomainSSL()` (Tools.php:395), which is `SELECT domain, domain_ssl FROM ps_shop_url WHERE main = 1` (ShopUrl.php:178). Both legs read the same table. Written anyway as hygiene |
+| `physical_uri` | ❌ NO | Already `/`, which `findShopByHost()`'s prefix match always satisfies |
+| Cache clear | ❌ NO | The whole repoint was measured working with `--skip-cache`. `ShopUrl`'s main-domain memo is a per-request static, not a file cache. Kept anyway — cheap, and a raw SQL write to `ps_configuration` WOULD need it |
+| `PS_SSL_ENABLED` | ❌ left at 0, deliberately | The tunnel terminates TLS and forwards http, so Apache sees http while the world sees https. `sslRedirection()` exempts POST unconditionally (FrontController.php:858) and `getShopDomainSsl(true)` returns `https://` regardless, so turning it on only adds a way for a GET to bounce |
+
+⚠️ **UPDATE the existing `main` row; never INSERT a second one.** A non-`main` row matches
+`findShopByHost()` and then trips the `!$is_main_uri` branch at Shop.php:379, producing a 302 that
+looks exactly like the one being removed.
+
+### Files
+
+| File | Change |
+|---|---|
+| `test/e2e/suites/ps-internet.mjs` | **NEW.** The internet leg, 13 assertions. |
+| `test/e2e/ps/repoint-shop.php` | **NEW.** Moves an installed shop onto the tunnel hostname; carries the measured table above. |
+| `test/e2e/docker-compose.ps-return.yml` | Adds the `cloudflared` quick tunnel (`vocify-e2e-psrt-tunnel`). |
+| `test/e2e/run-ps-return.mjs` | Scrapes the tunnel hostname, repoints, runs BOTH legs, provisions + tears down the platform fixture, asserts the safety invariant three times. |
+| `test/e2e/suites/ps-return.mjs` | Per-run `callSid` prefix — see the isolation bug below. |
+| `test/e2e/README.md` | The internet leg and the repoint. |
+
+### A test-isolation bug found and fixed in §10's own suite
+
+`vocify_call_results.call_sid` is UNIQUE and **global, not per-order** — that index is what makes a
+replayed push a no-op. §10's suite used fixed sids (`rt-confirmed`, `rt-cancelled`, …), so a second
+run against the same shop answered every push *"Already applied (duplicate call result)"* and **15
+assertions failed** for a reason with nothing to do with the module. A cold run never sees it, which
+is exactly why it survived. Every sid is now prefixed with a per-run token.
+
+### Safety
+
+No phone was dialled and nothing dialable was created. The fixture agent's calling window is
+computed closed; the order's `scheduled_at` was read back at **1.2 h out** and the run aborts under
+an hour; the attempt is driven terminal BEFORE the `calls` row exists. Asserted three times — after
+the write, at the end of the suite, and after teardown — all
+`SELECT count(*) FROM attempts WHERE status IN ('pending','scheduled') AND scheduled_at <= now()` =
+**0**, re-verified independently afterwards. The fixture was fully removed
+(`_companies_remaining: 0`), no `e2e-psrt-*` / `e2e-psdom-*` company remains, and every container was
+torn down. `safe-url.ts` and every signature/freshness check are untouched — the tunnel is what
+satisfies `assertSafeExternalUrl()`, not a relaxed guard.
+
+### Still open
+
+1. 🟡 `suites/ps-return.mjs` + `suites/ps-internet.mjs` run from their own driver, not
+   `orchestrate.mjs`. Folding them in as a fourth `--only` target is a small change to a shared file
+   and was left to its owner.
+2. 🟡 platform/PROGRESS.md:1750's "Not deployed" note is stale and should be corrected by whoever
+   owns that file — the deploy has happened, measured above.
+3. ⏳ Commit + push on `main` — deliberately **not** committed; the lead reviews the working tree.
 
 ---
 

@@ -431,7 +431,7 @@ async function main() {
       log(`  company ${psFixture.companyId} (PrestaShop)`);
       const psVersions = await provisionPsShop(psFixture, webhookUrl);
       Object.assign(versions, psVersions);
-      await runPrestaShopSuite({ rec, sql, fixture: psFixture, webhookUrl, notes });
+      await runPrestaShopSuite({ rec, sql, fixture: psFixture, webhookUrl, notes, slowReplay: has('slow-replay') });
     }
 
     // ---- RETURN PATH: platform -> shop ----
