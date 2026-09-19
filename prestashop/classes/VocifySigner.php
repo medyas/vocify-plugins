@@ -7,8 +7,13 @@
  *
  * The platform verifies X-Signature against the per-key "webhook signing
  * secret" (signatureSecret) shown once in the Vocify AI dashboard — NOT the
- * API key itself. The signature MUST be computed over the exact raw request
- * body that is transmitted.
+ * API key itself. Per the 2026-09-18 platform contract, the signature is
+ * computed over `"{X-Timestamp}.{rawBody}"` (timestamp bound into the signed
+ * message, hex digest) — NOT over the body alone — and the platform rejects
+ * the request if X-Timestamp is missing, unparsable, or more than 300s from
+ * its clock. The X-Timestamp header sent with the request MUST be the exact
+ * same string used to build the signed message, and rawBody MUST be the
+ * exact bytes that are transmitted.
  *
  * @author Vocify AI
  * @copyright 2025 Vocify AI
@@ -25,24 +30,52 @@ class VocifySigner
     const PLATFORM = 'PRESTASHOP';
 
     /**
-     * Compute the HMAC-SHA256 signature for a raw request body.
+     * Build the canonical message the platform signs and verifies:
+     * `"{timestamp}.{rawBody}"` (literal dot separator).
      *
-     * @param string $rawBody Raw JSON body that will be transmitted.
-     * @param string $secret  Webhook signing secret (signatureSecret).
+     * @param string $timestamp ISO 8601 timestamp — must match the
+     *                          X-Timestamp header sent with the request.
+     * @param string $rawBody   Raw JSON body that will be transmitted.
+     * @return string
+     */
+    public function buildSignedMessage($timestamp, $rawBody)
+    {
+        return $timestamp . '.' . $rawBody;
+    }
+
+    /**
+     * Compute the HMAC-SHA256 signature over the timestamp-bound message.
+     *
+     * @param string $timestamp ISO 8601 timestamp (same value sent as
+     *                          X-Timestamp).
+     * @param string $rawBody   Raw JSON body that will be transmitted.
+     * @param string $secret    Webhook signing secret (signatureSecret).
      * @return string Hex-encoded HMAC-SHA256 signature.
      */
-    public function sign($rawBody, $secret)
+    public function sign($timestamp, $rawBody, $secret)
     {
-        return hash_hmac('sha256', $rawBody, $secret);
+        return hash_hmac('sha256', $this->buildSignedMessage($timestamp, $rawBody), $secret);
     }
 
     /**
      * Build the headers for the unified webhook request.
      *
-     * X-Signature is only included when a signing secret is configured.
-     * Sending a signature the platform cannot verify would hard-fail with
-     * 401, so an unsigned request is the correct fallback for keys that
-     * have no signatureSecret configured.
+     * X-Signature is only included when a local signing secret is configured
+     * (`$signatureSecret` — the merchant's plugin setting). This is a LEGACY
+     * fallback from before the platform's 2026-09-18 fail-closed change: the
+     * platform now REJECTS every request — signed or not — for any API key
+     * whose server-side `signatureSecret` is unset (`SIGNATURE_REQUIRED`), and
+     * rejects a signed-but-secretless-locally request as a missing signature
+     * (`SIGNATURE_MISMATCH`) the moment the key DOES have a secret configured
+     * server-side. In both cases, sending unsigned no longer "succeeds
+     * without a signature" — it simply fails the same way sending a wrong
+     * signature would. Every API key must have its signing secret entered
+     * here for webhooks to work at all; this fallback branch will not save a
+     * misconfigured install, it only avoids sending a header that would be
+     * outright empty. The X-Timestamp used here is the SAME value folded into
+     * the signature below — never regenerate it separately, or the signed
+     * message and the header will disagree and the platform will reject the
+     * request regardless of whether a secret is configured.
      *
      * @param string $apiKey          Agent API key (vcf_live_...).
      * @param string $domain          Store domain (no scheme).
@@ -52,16 +85,18 @@ class VocifySigner
      */
     public function buildHeaders($apiKey, $domain, $rawBody, $signatureSecret = '')
     {
+        $timestamp = gmdate('c');
+
         $headers = array(
             'Content-Type: application/json',
             'X-Platform: ' . self::PLATFORM,
             'X-API-Key: ' . $apiKey,
             'X-Domain: ' . $domain,
-            'X-Timestamp: ' . gmdate('c'),
+            'X-Timestamp: ' . $timestamp,
         );
 
         if (!empty($signatureSecret)) {
-            $headers[] = 'X-Signature: ' . $this->sign($rawBody, $signatureSecret);
+            $headers[] = 'X-Signature: ' . $this->sign($timestamp, $rawBody, $signatureSecret);
         }
 
         return $headers;

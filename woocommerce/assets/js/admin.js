@@ -31,17 +31,19 @@
                     nonce: vocifyAdmin.nonce
                 },
                 success: function(response) {
+                    // .text(), not .html(): the message may contain the remote
+                    // endpoint's response body and must never be parsed as markup.
                     if (response.success) {
                         $result.removeClass('loading error').addClass('success')
-                            .html('✓ ' + response.data.message);
+                            .text('✓ ' + response.data.message);
                     } else {
                         $result.removeClass('loading success').addClass('error')
-                            .html('✗ ' + response.data.message);
+                            .text('✗ ' + response.data.message);
                     }
                 },
                 error: function(xhr, status, error) {
                     $result.removeClass('loading success').addClass('error')
-                        .html('✗ Connection failed: ' + error);
+                        .text('✗ Connection failed: ' + error);
                 },
                 complete: function() {
                     // Re-enable button

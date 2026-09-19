@@ -53,6 +53,69 @@ class VocifyWebhookService
     }
 
     /**
+     * Whether a configured webhook URL may be contacted.
+     *
+     * Only absolute https:// URLs to a public host are accepted. This blocks
+     * file://, gopher://, dict:// and every other libcurl protocol, plaintext
+     * http://, embedded credentials, and loopback / private / link-local
+     * targets (back-office SSRF and local file read — pentest 2026-09-18).
+     * A host that does not resolve is allowed: reachability is not this
+     * check's job and the default endpoint may not be live yet.
+     *
+     * @param mixed $url
+     * @return bool
+     */
+    public static function isAllowedWebhookUrl($url)
+    {
+        if (!is_string($url) || $url === '' || strlen($url) > 2048) {
+            return false;
+        }
+
+        $parts = parse_url($url);
+
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return false;
+        }
+
+        if (strtolower($parts['scheme']) !== 'https' || isset($parts['user']) || isset($parts['pass'])) {
+            return false;
+        }
+
+        $host = strtolower(trim($parts['host'], '[]'));
+
+        if ($host === 'localhost' || preg_match('/\.(localhost|local|internal)$/', $host)) {
+            return false;
+        }
+
+        $publicOnly = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
+
+        // Literal IPv4/IPv6: must be a public address.
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            return (bool)filter_var($host, FILTER_VALIDATE_IP, $publicOnly);
+        }
+
+        // Numeric-looking hosts that are not a canonical IP (2130706433,
+        // 0x7f000001, 127.1, 0177.0.0.1) are libcurl aliases for an IPv4
+        // address. No public FQDN has all-numeric labels, so reject them.
+        if (preg_match('/^(?:0x[0-9a-f]+|[0-9]+)(?:\.(?:0x[0-9a-f]+|[0-9]+))*$/', $host)) {
+            return false;
+        }
+
+        // Hostname: refuse if it currently resolves to a non-public address
+        // (defence in depth; an unresolvable host is allowed).
+        $resolved = gethostbyname($host);
+
+        if ($resolved !== $host
+            && filter_var($resolved, FILTER_VALIDATE_IP)
+            && !filter_var($resolved, FILTER_VALIDATE_IP, $publicOnly)
+        ) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Send order to Vocify AI
      *
      * @param Order $order
@@ -67,6 +130,12 @@ class VocifyWebhookService
         if (empty($apiKey)) {
             $this->log($order->id, 'error', 0, 'API key not configured');
             return $this->result(false, 0, null, 'API key not configured', false, null);
+        }
+
+        if (!self::isAllowedWebhookUrl($webhookUrl)) {
+            $message = 'Webhook URL rejected: must be an https:// URL to a public host';
+            $this->log($order->id, 'error', 0, $message);
+            return $this->result(false, 0, null, $message, false, null);
         }
 
         // Transform order to unified payload
@@ -454,6 +523,15 @@ class VocifyWebhookService
      */
     public function sendWebhook($payload, $apiKey, $webhookUrl)
     {
+        if (!self::isAllowedWebhookUrl($webhookUrl)) {
+            return array(
+                'success' => false,
+                'http_code' => 0,
+                'error' => 'Webhook URL rejected: must be an https:// URL to a public host',
+                'response' => null,
+            );
+        }
+
         $storeDomain = $this->signer->extractDomain(Tools::getShopDomainSsl(true));
         $signatureSecret = Configuration::get('VOCIFY_SIGNATURE_SECRET');
 
@@ -467,6 +545,10 @@ class VocifyWebhookService
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 30,
+            // HTTPS only — never file://, gopher://, etc. — and no redirects.
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_FOLLOWLOCATION => false,
         ));
 
         $response = curl_exec($ch);
@@ -518,6 +600,11 @@ class VocifyWebhookService
         }
 
         $webhookUrl = Configuration::get('VOCIFY_WEBHOOK_URL');
+
+        if (!self::isAllowedWebhookUrl($webhookUrl)) {
+            return 0;
+        }
+
         $rows = Db::getInstance()->executeS(
             'SELECT id_webhook, id_order, payload FROM `' . _DB_PREFIX_ . 'vocify_failed_webhooks`
              WHERE retry_count < ' . (int)self::FAILED_QUEUE_MAX_RETRIES . '

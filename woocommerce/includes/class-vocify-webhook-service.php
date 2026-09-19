@@ -50,6 +50,35 @@ class Vocify_AI_Webhook_Service {
     }
 
     /**
+     * Whether a configured webhook URL may be contacted.
+     *
+     * Requires an absolute https:// URL with a non-empty host and no embedded
+     * credentials, so a blank, relative or plaintext-http endpoint never
+     * receives the API key and customer data (pentest 2026-09-18).
+     * Reachability is deliberately not checked here.
+     *
+     * @param mixed $url
+     * @return bool
+     */
+    public static function is_allowed_webhook_url($url) {
+        if (!is_string($url) || $url === '' || strlen($url) > 2048) {
+            return false;
+        }
+
+        $parts = wp_parse_url($url);
+
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return false;
+        }
+
+        if (strtolower($parts['scheme']) !== 'https' || isset($parts['user']) || isset($parts['pass'])) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Send order to Vocify AI
      *
      * @param WC_Order $order
@@ -63,6 +92,12 @@ class Vocify_AI_Webhook_Service {
         if (empty($api_key)) {
             $this->log($order->get_id(), 'error', 0, 'API key not configured');
             return $this->result(false, 0, null, 'API key not configured', false, null);
+        }
+
+        if (!self::is_allowed_webhook_url($webhook_url)) {
+            $message = 'Webhook URL rejected: must be an absolute https:// URL';
+            $this->log($order->get_id(), 'error', 0, $message);
+            return $this->result(false, 0, null, $message, false, null);
         }
 
         // Transform order to unified payload
@@ -432,6 +467,15 @@ class Vocify_AI_Webhook_Service {
      * @return array
      */
     public function send_webhook($payload, $api_key, $webhook_url) {
+        if (!self::is_allowed_webhook_url($webhook_url)) {
+            return array(
+                'success' => false,
+                'http_code' => 0,
+                'error' => 'Webhook URL rejected: must be an absolute https:// URL',
+                'response' => null,
+            );
+        }
+
         $store_domain = $this->signer->extract_domain(get_site_url());
         $signature_secret = get_option('vocify_signature_secret', '');
 
@@ -493,6 +537,11 @@ class Vocify_AI_Webhook_Service {
         }
 
         $webhook_url = get_option('vocify_webhook_url');
+
+        if (!self::is_allowed_webhook_url($webhook_url)) {
+            return 0;
+        }
+
         $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT id, order_id, payload FROM {$table}
              WHERE retry_count < %d

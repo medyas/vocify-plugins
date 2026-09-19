@@ -41,6 +41,7 @@ require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-payload-validator.php
 require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-webhook-service.php';
 require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-admin.php';
 require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-order-handler.php';
+require_once VOCIFY_AI_PLUGIN_DIR . 'includes/class-vocify-status-receiver.php';
 
 /**
  * Main Vocify AI Plugin Class
@@ -69,6 +70,13 @@ class Vocify_AI_WooCommerce {
     public $order_handler;
 
     /**
+     * Inbound status receiver (platform -> shop)
+     *
+     * @var Vocify_AI_Status_Receiver
+     */
+    public $status_receiver;
+
+    /**
      * Get singleton instance
      *
      * @return Vocify_AI_WooCommerce
@@ -82,8 +90,49 @@ class Vocify_AI_WooCommerce {
 
     /**
      * Constructor
+     *
+     * Runs while this file is being INCLUDED, which is before any other plugin
+     * has necessarily been loaded. Only things that must be registered that
+     * early belong here; everything that needs WooCommerce waits for
+     * `plugins_loaded`.
+     *
+     * This split is not stylistic. WordPress includes active plugin files in
+     * the order they appear in the `active_plugins` option, which it keeps
+     * sorted by path — so `vocify-ai-woocommerce/…` is ALWAYS included before
+     * `woocommerce/woocommerce.php`. A `class_exists('WooCommerce')` test at
+     * include time is therefore false on every normal install, and gating
+     * registration on it silently disabled the entire plugin: no order hooks,
+     * no admin page, and no activation hook (so the log/retry tables were
+     * never created either).
      */
     private function __construct() {
+        // Activation/deactivation hooks MUST be registered while the plugin
+        // file is being included — WordPress fires them later in that same
+        // request — and must not depend on WooCommerce, or a plugin activated
+        // before WooCommerce never creates its tables and never gets a second
+        // chance (an activation hook fires once, on activation).
+        register_activation_hook(__FILE__, array($this, 'activate'));
+        register_deactivation_hook(__FILE__, array($this, 'deactivate'));
+
+        // `before_woocommerce_init` fires while WooCommerce's own file is being
+        // included, which is BEFORE `plugins_loaded`. Declaring HPOS
+        // compatibility any later is simply ignored.
+        add_action('before_woocommerce_init', array($this, 'declare_hpos_compatibility'));
+
+        // Everything that needs the WooCommerce class waits until every plugin
+        // file has been included.
+        add_action('plugins_loaded', array($this, 'on_plugins_loaded'));
+    }
+
+    /**
+     * Boot the parts of the plugin that require WooCommerce.
+     *
+     * By `plugins_loaded` every active plugin file has been included, so
+     * `class_exists('WooCommerce')` is finally a meaningful test.
+     */
+    public function on_plugins_loaded() {
+        $this->load_textdomain();
+
         // Check if WooCommerce is active
         if (!$this->is_woocommerce_active()) {
             add_action('admin_notices', array($this, 'woocommerce_missing_notice'));
@@ -99,24 +148,21 @@ class Vocify_AI_WooCommerce {
     }
 
     /**
-     * Initialize WordPress hooks
+     * Initialize WordPress hooks that require WooCommerce to be loaded.
      */
     private function init_hooks() {
-        // Activation/deactivation hooks
-        register_activation_hook(__FILE__, array($this, 'activate'));
-        register_deactivation_hook(__FILE__, array($this, 'deactivate'));
-
         // Plugin action links
         add_filter('plugin_action_links_' . VOCIFY_AI_PLUGIN_BASENAME, array($this, 'plugin_action_links'));
 
         // Hourly retry of failed webhooks (WP-Cron)
         add_action('vocify_retry_failed_webhooks', array($this, 'retry_failed_webhooks'));
 
-        // Load text domain
-        add_action('plugins_loaded', array($this, 'load_textdomain'));
-
-        // Declare HPOS compatibility
-        add_action('before_woocommerce_init', array($this, 'declare_hpos_compatibility'));
+        // The RETURN half of the round trip: the platform POSTs the call
+        // outcome back to /vocify/v1/order-status once the call completes.
+        // `rest_api_init` fires on every REST request; there is no earlier
+        // hook a route can be registered on.
+        $this->status_receiver = new Vocify_AI_Status_Receiver();
+        add_action('rest_api_init', array($this->status_receiver, 'register_routes'));
     }
 
     /**

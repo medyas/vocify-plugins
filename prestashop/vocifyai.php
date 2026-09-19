@@ -188,6 +188,27 @@ class VocifyAI extends Module
         }
 
         $order = $params['order'];
+
+        // ⚠️ `$order->current_state` is NOT set yet when this hook fires.
+        // PaymentModule::validateOrder() runs Hook::exec('actionValidateOrder')
+        // at classes/PaymentModule.php:560 and only applies the status ~20
+        // lines later, via OrderHistory::changeIdOrderState(). Transforming the
+        // order as-is therefore builds `new OrderState(0)` — an unloaded
+        // object with a null name — so `status` comes out empty, the payload
+        // validator rejects it ("status must be a non-empty string"), and this
+        // hook NEVER sends anything. Measured on PrestaShop 8.2.8.
+        //
+        // PrestaShop already hands us the state it is about to apply, in the
+        // same $params array. Use it, on the in-memory object only — nothing
+        // is persisted here, and validateOrder() writes the real history row
+        // immediately afterwards.
+        if (empty($order->current_state)
+            && isset($params['orderStatus'])
+            && Validate::isLoadedObject($params['orderStatus'])
+        ) {
+            $order->current_state = (int)$params['orderStatus']->id;
+        }
+
         $this->sendOrderWebhook($order);
     }
 
@@ -316,6 +337,13 @@ class VocifyAI extends Module
             return $this->displayError($this->l('Invalid API key format. Expected format: vcf_live_XXXXXXXXXXXXXXXXXXXX'));
         }
 
+        // Validate webhook URL: absolute https:// to a public host only. This is
+        // what stops file:///... local file read and internal SSRF from the BO.
+        $webhookUrl = trim((string)$webhookUrl);
+        if (!Validate::isAbsoluteUrl($webhookUrl) || !VocifyWebhookService::isAllowedWebhookUrl($webhookUrl)) {
+            return $this->displayError($this->l('Invalid webhook URL. It must be an absolute https:// URL to a public host, e.g. https://app.vocify-ai.com/api/webhooks/ecommerce'));
+        }
+
         // Update configuration
         Configuration::updateValue('VOCIFY_API_KEY', $apiKey);
         Configuration::updateValue('VOCIFY_SIGNATURE_SECRET', $signatureSecret);
@@ -345,6 +373,10 @@ class VocifyAI extends Module
             return $this->displayError($this->l('Please configure your API key before testing the connection.'));
         }
 
+        if (!VocifyWebhookService::isAllowedWebhookUrl($webhookUrl)) {
+            return $this->displayError($this->l('Webhook URL rejected: it must be an https:// URL to a public host. Fix it above and save before testing.'));
+        }
+
         $warnings = '';
 
         if (empty($signatureSecret)) {
@@ -363,6 +395,10 @@ class VocifyAI extends Module
                 CURLOPT_HTTPHEADER => array(
                     'X-API-Key: ' . $apiKey,
                 ),
+                // HTTPS only — never file://, gopher://, etc. — and no redirects.
+                CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+                CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+                CURLOPT_FOLLOWLOCATION => false,
             ));
 
             $response = curl_exec($ch);

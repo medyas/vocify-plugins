@@ -78,16 +78,19 @@ Each plugin should follow this structure:
 X-Platform: SHOPIFY|WOOCOMMERCE|PRESTASHOP|MAGENTO
 X-API-Key: vcf_live_XXXXXXXXXXXXXXXXXXXX
 X-Domain: store-domain.com
-X-Signature: hmac-sha256-signature
-X-Timestamp: ISO-8601-timestamp
+X-Signature: hmac-sha256-signature (REQUIRED as of 2026-09-18 — platform fails closed)
+X-Timestamp: ISO-8601-timestamp (REQUIRED — bound into the signature, ~300s freshness window)
 Content-Type: application/json
 ```
 
-**HMAC Signature Generation**:
+**HMAC Signature Generation** (contract fixed 2026-09-19 — see `PROGRESS.md` §7):
 ```php
-// PHP example (adapt for other languages)
+// PHP example (adapt for other languages). Keyed on the per-agent webhook
+// signing secret from the dashboard — NEVER the API key — and the timestamp
+// is bound INTO the signed message, not sent alongside an unbound signature.
 $rawBody = json_encode($payload);
-$signature = hash_hmac('sha256', $rawBody, $apiKey);
+$timestamp = gmdate('c'); // ISO 8601 — send this SAME value as X-Timestamp
+$signature = hash_hmac('sha256', $timestamp . '.' . $rawBody, $signatureSecret);
 ```
 
 **Retry Logic**:

@@ -26,6 +26,18 @@ if (!defined('ABSPATH')) {
 
 class Vocify_AI_Payload_Builder {
 
+    /**
+     * The date format the platform's payload schema accepts.
+     *
+     * `gmdate('c')` produces `2026-09-19T12:05:39+00:00`, and the platform
+     * validates these fields with Zod's `z.string().datetime()`, which accepts
+     * ONLY a literal `Z` designator — a `+00:00` offset is rejected with
+     * "Invalid ISO datetime" and the whole webhook 400s. Same instant, same
+     * standard, different spelling; verified over the wire against a running
+     * platform on 2026-09-19 (see plugins/PROGRESS.md §8).
+     */
+    const PLATFORM_DATE_FORMAT = 'Y-m-d\TH:i:s\Z';
+
     const FINANCIAL_STATUSES = array(
         'pending', 'authorized', 'partially_paid', 'paid',
         'partially_refunded', 'refunded', 'voided',
@@ -110,7 +122,7 @@ class Vocify_AI_Payload_Builder {
             ),
             'currency' => isset($raw['currency']) ? strtoupper((string)$raw['currency']) : '',
             'shippingAddress' => $shipping,
-            'createdAt' => gmdate('c', $createdAt),
+            'createdAt' => gmdate(self::PLATFORM_DATE_FORMAT, $createdAt),
         );
 
         // Optional identifiers / statuses (only set when non-empty).
@@ -354,7 +366,7 @@ class Vocify_AI_Payload_Builder {
         }
 
         if (is_numeric($value)) {
-            $payload[$key] = gmdate('c', (int)$value);
+            $payload[$key] = gmdate(self::PLATFORM_DATE_FORMAT, (int)$value);
         }
     }
 

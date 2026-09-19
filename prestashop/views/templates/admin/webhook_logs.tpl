@@ -56,8 +56,8 @@
                                 </td>
                                 <td>
                                     {if $log.response}
-                                        <button type="button" class="btn btn-xs btn-default"
-                                                onclick="alert('{$log.response|escape:'javascript':'UTF-8'}')">
+                                        <button type="button" class="btn btn-xs btn-default vocify-view-response"
+                                                data-response="{$log.response|escape:'html':'UTF-8'}">
                                             <i class="icon-search"></i> {l s='View' mod='vocifyai'}
                                         </button>
                                     {elseif $log.error_message}
@@ -86,6 +86,19 @@
         {/if}
     </div>
 </div>
+
+<script type="text/javascript">
+    // Response bodies come from the remote endpoint. They are read from an
+    // HTML-escaped data attribute and shown as text, never via an inline
+    // handler where an HTML entity such as &#39; would break out of the
+    // JavaScript string (pentest 2026-09-18).
+    document.addEventListener('click', function (event) {
+        var button = event.target.closest ? event.target.closest('.vocify-view-response') : null;
+        if (button) {
+            alert(button.getAttribute('data-response'));
+        }
+    });
+</script>
 
 <style>
     .badge {

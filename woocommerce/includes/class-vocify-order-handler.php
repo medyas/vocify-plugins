@@ -36,8 +36,10 @@ class Vocify_AI_Order_Handler {
      * Initialize WordPress/WooCommerce hooks
      */
     private function init_hooks() {
-        // Order creation hook
-        add_action('woocommerce_new_order', array($this, 'handle_new_order'), 10, 1);
+        // Order creation hook. TWO accepted args, not one: WooCommerce passes
+        // the in-memory WC_Order alongside the id, and that object is the only
+        // one that has the line items at this point — see handle_new_order().
+        add_action('woocommerce_new_order', array($this, 'handle_new_order'), 10, 2);
 
         // Order status change hook
         add_action('woocommerce_order_status_changed', array($this, 'handle_order_status_change'), 10, 4);
@@ -49,9 +51,19 @@ class Vocify_AI_Order_Handler {
     /**
      * Handle new order creation
      *
-     * @param int $order_id Order ID
+     * ⚠️ Use the WC_Order WooCommerce hands us; do NOT re-read it by id.
+     * `WC_Abstract_Order::save()` calls `$data_store->create()` — which is what
+     * fires `woocommerce_new_order` — and only calls `save_items()` AFTER it
+     * returns. A `wc_get_order($order_id)` inside this hook therefore loads an
+     * order with ZERO line items, the payload builder correctly refuses to
+     * build an item-less payload, and every new-order webhook silently degrades
+     * to "Failed to transform order data". Measured against WooCommerce 11.1.1:
+     * passed object 1 item, re-fetched object 0 items, same instant.
+     *
+     * @param int           $order_id Order ID
+     * @param WC_Order|null $order    Order object as passed by WooCommerce.
      */
-    public function handle_new_order($order_id) {
+    public function handle_new_order($order_id, $order = null) {
         // Check if integration is enabled
         if (get_option('vocify_enabled') !== 'yes') {
             return;
@@ -66,8 +78,12 @@ class Vocify_AI_Order_Handler {
             return;
         }
 
-        // Get order object
-        $order = wc_get_order($order_id);
+        // Prefer the object WooCommerce passed (it carries the unsaved line
+        // items); fall back to a lookup only for callers that fire this action
+        // with the id alone.
+        if (!$order instanceof WC_Order) {
+            $order = wc_get_order($order_id);
+        }
         if (!$order) {
             return;
         }

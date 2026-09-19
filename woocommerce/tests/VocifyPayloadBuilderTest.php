@@ -108,7 +108,7 @@ class VocifyPayloadBuilderTest extends TestCase
         $this->assertArrayNotHasKey('updatedAt', $payload);
         $this->assertArrayNotHasKey('paidAt', $payload);
         $this->assertArrayHasKey('createdAt', $payload);
-        $this->assertSame('2025-01-01T00:00:00+00:00', $payload['createdAt']);
+        $this->assertSame('2025-01-01T00:00:00Z', $payload['createdAt']);
     }
 
     public function testInvalidEnumValuesAreDropped()

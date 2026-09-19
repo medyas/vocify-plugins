@@ -84,7 +84,7 @@ class Vocify_AI_Admin {
         // Webhook URL
         register_setting('vocify_ai_settings', 'vocify_webhook_url', array(
             'type'              => 'string',
-            'sanitize_callback' => 'esc_url_raw',
+            'sanitize_callback' => array($this, 'sanitize_webhook_url'),
             'default'           => 'https://app.vocify-ai.com/api/webhooks/ecommerce',
         ));
 
@@ -104,6 +104,32 @@ class Vocify_AI_Admin {
      */
     public function sanitize_checkbox($value) {
         return $value === 'yes' ? 'yes' : 'no';
+    }
+
+    /**
+     * Sanitize and validate the webhook URL (server-side).
+     *
+     * Only an absolute https:// URL with a host is accepted; the admin.js
+     * blur alert is advisory only. On rejection the previous value is kept
+     * and a settings error is shown on the page.
+     *
+     * @param string $value Input value
+     * @return string
+     */
+    public function sanitize_webhook_url($value) {
+        $value = esc_url_raw(trim((string) $value), array('https'));
+
+        if (Vocify_AI_Webhook_Service::is_allowed_webhook_url($value)) {
+            return $value;
+        }
+
+        add_settings_error(
+            'vocify_ai_settings',
+            'vocify_webhook_url_invalid',
+            __('Webhook URL was not saved: it must be an absolute https:// URL, e.g. https://app.vocify-ai.com/api/webhooks/ecommerce', 'vocify-ai')
+        );
+
+        return get_option('vocify_webhook_url', 'https://app.vocify-ai.com/api/webhooks/ecommerce');
     }
 
     /**
@@ -498,6 +524,12 @@ class Vocify_AI_Admin {
         // Get webhook URL
         $webhook_url = get_option('vocify_webhook_url', 'https://app.vocify-ai.com/api/webhooks/ecommerce');
 
+        if (!Vocify_AI_Webhook_Service::is_allowed_webhook_url($webhook_url)) {
+            wp_send_json_error(array(
+                'message' => __('Webhook URL is invalid: it must be an absolute https:// URL. Fix it above and save settings before testing.', 'vocify-ai'),
+            ));
+        }
+
         // 1. Reachability + health of the endpoint (GET).
         $response = wp_remote_get($webhook_url, array(
             'timeout' => 10,
@@ -540,12 +572,24 @@ class Vocify_AI_Admin {
             ));
         }
 
+        // Never echo the raw remote body back to the browser: prefer the JSON
+        // "error" field, strip tags and truncate. admin.js renders the message
+        // with .text(), so this is defence in depth (pentest 2026-09-18).
+        $excerpt = (is_array($body) && isset($body['error']) && is_string($body['error']))
+            ? $body['error']
+            : (string) wp_remote_retrieve_body($response);
+        $excerpt = trim(wp_strip_all_tags($excerpt));
+
+        if (mb_strlen($excerpt) > 200) {
+            $excerpt = mb_substr($excerpt, 0, 200) . '…';
+        }
+
         wp_send_json_error(array(
             'message' => sprintf(
-                /* translators: 1: HTTP code 2: Response body */
+                /* translators: 1: HTTP code 2: Response excerpt (tags stripped, truncated) */
                 __('Connection failed with HTTP code %1$d: %2$s', 'vocify-ai'),
                 $http_code,
-                wp_remote_retrieve_body($response)
+                $excerpt
             ),
         ));
     }

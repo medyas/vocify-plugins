@@ -60,8 +60,8 @@
                                     </td>
                                     <td>
                                         {if $log.response}
-                                            <button type="button" class="btn btn-xs btn-default"
-                                                    onclick="showVocifyDetails('{$log.response|escape:'javascript':'UTF-8'}')">
+                                            <button type="button" class="btn btn-xs btn-default vocify-view-details"
+                                                    data-response="{$log.response|escape:'html':'UTF-8'}">
                                                 <i class="icon-search"></i> {l s='View Details' mod='vocifyai'}
                                             </button>
                                         {elseif $log.error_message}
@@ -120,6 +120,15 @@
             alert(response);
         }
     }
+
+    // Response bodies come from the remote endpoint: read them from the
+    // HTML-escaped data attribute, never via an inline click handler (pentest 2026-09-18).
+    document.addEventListener('click', function (event) {
+        var button = event.target.closest ? event.target.closest('.vocify-view-details') : null;
+        if (button) {
+            showVocifyDetails(button.getAttribute('data-response'));
+        }
+    });
 </script>
 
 <style>
