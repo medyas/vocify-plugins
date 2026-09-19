@@ -1,0 +1,83 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# RETURN-PATH PrestaShop stack (platform → shop), for `suites/ps-return.mjs`.
+#
+# Deliberately a SECOND stack rather than a flag on `docker-compose.ps.yml`,
+# for the same reason `docker-compose.rt.yml` is separate from
+# `docker-compose.wc.yml`: the two directions want the shop configured
+# differently (the inbound suite needs VOCIFY_ENABLED=1 and a live platform
+# fixture; the return suite mostly wants the outbound hook OUT of the way so a
+# status change does not fan out into webhook traffic), and one stack shared
+# between them has already rewritten the other's configuration out from under
+# it once on the WooCommerce side.
+#
+# Distinct project name and distinct container names so this can run
+# concurrently with `vocify-e2e-ps` on the same machine — two agents sharing
+# one `container_name` is a "port/name is already allocated" failure, which is
+# how the inbound stack lost its published port.
+#
+# ⚠️ Unlike `docker-compose.rt.yml` there is NO cloudflared tunnel here. The
+# receiver is exercised over `http://localhost/` from INSIDE the container, so
+# what this stack proves is everything on the shop side of the wire: that the
+# PrestaShop dispatcher routes to the module front controller, that the HMAC
+# verifies against really-transmitted bytes, that the rejection matrix answers
+# the right codes, and that the order moves in PrestaShop's own MySQL. It
+# proves nothing about the platform reaching a merchant over the internet —
+# that leg needs a public https origin and is what `docker-compose.rt.yml`
+# exists for. Installing PrestaShop against a hostname that is only known
+# after cloudflared has started means rewriting `ps_shop_url` post-install,
+# which WordPress does not need and PrestaShop is far fussier about.
+name: vocify-e2e-ps-rt
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: vocify-e2e-psrt-db
+    environment:
+      MYSQL_ROOT_PASSWORD: psroot
+      MYSQL_DATABASE: prestashop
+      MYSQL_USER: prestashop
+      MYSQL_PASSWORD: prestashop
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-uroot', '-ppsroot']
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    tmpfs:
+      - /var/lib/mysql
+
+  prestashop:
+    image: prestashop/prestashop:8-apache
+    container_name: vocify-e2e-psrt-shop
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DB_SERVER: db
+      DB_NAME: prestashop
+      DB_USER: prestashop
+      DB_PASSWD: prestashop
+      PS_INSTALL_AUTO: 1
+      # NOT PS_ERASE_DB — see the note in docker-compose.ps.yml. MySQL is on
+      # tmpfs with no volume, so every `up` starts from an empty database.
+      PS_DEV_MODE: 0
+      PS_DOMAIN: ps-rt.vocify.test
+      PS_FOLDER_ADMIN: admin_e2e
+      PS_FOLDER_INSTALL: install_e2e
+      PS_COUNTRY: fr
+      PS_LANGUAGE: en
+      ADMIN_MAIL: admin@e2e.invalid
+      ADMIN_PASSWD: AdminE2E123!
+    # No published port: every request in this suite is made from inside the
+    # container with `docker compose exec`, against http://localhost/.
+    volumes:
+      - ../../prestashop:/var/www/html/modules/vocifyai:ro
+      - ./ps:/e2e:ro
+    tmpfs:
+      # Shadow the module's `vendor/` with an empty directory so the container
+      # sees the module EXACTLY as it ships — a dev checkout's PHPUnit pulls
+      # nikic/php-parser v5, which shadows the v4 PrestaShop depends on and
+      # makes `prestashop:module install` fail for EVERY module. See
+      # docker-compose.ps.yml for the measured failure.
+      - /var/www/html/modules/vocifyai/vendor
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    restart: 'no'

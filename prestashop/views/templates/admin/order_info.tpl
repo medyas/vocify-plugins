@@ -12,6 +12,53 @@
         {l s='Vocify AI - Order Confirmation Calls' mod='vocifyai'}
     </div>
     <div class="panel-body card-body">
+        {* Call results pushed back by Vocify AI after the call — the RETURN
+           leg. PrestaShop has no per-order note stream like WooCommerce's, so
+           this table IS the merchant-visible note; the same rows are what make
+           a replayed push idempotent. Shown regardless of the enabled toggle:
+           a merchant who has just switched the integration off still needs to
+           read the results of calls that already happened. *}
+        {if isset($vocify_call_results) && $vocify_call_results && count($vocify_call_results) > 0}
+            <h4>{l s='Call Results' mod='vocifyai'}</h4>
+            <div class="table-responsive">
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th>{l s='Outcome' mod='vocifyai'}</th>
+                            <th>{l s='Received' mod='vocifyai'}</th>
+                            <th>{l s='Details' mod='vocifyai'}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {foreach from=$vocify_call_results item=result}
+                            <tr>
+                                <td>
+                                    {if $result.outcome == 'confirmed'}
+                                        <span class="label label-success">
+                                            <i class="icon-check"></i> {$result.outcome|escape:'html':'UTF-8'}
+                                        </span>
+                                    {elseif $result.outcome == 'cancelled'}
+                                        <span class="label label-danger">
+                                            <i class="icon-remove"></i> {$result.outcome|escape:'html':'UTF-8'}
+                                        </span>
+                                    {else}
+                                        <span class="label label-warning">
+                                            {$result.outcome|escape:'html':'UTF-8'}
+                                        </span>
+                                    {/if}
+                                </td>
+                                <td><small>{$result.created_at|escape:'html':'UTF-8'}</small></td>
+                                {* The note text comes from the platform. Escaped as HTML
+                                   and rendered as pre-wrap, never as markup — same rule as
+                                   the webhook-log bodies below (pentest 2026-09-18). *}
+                                <td><div style="white-space: pre-wrap;">{$result.note|escape:'html':'UTF-8'}</div></td>
+                            </tr>
+                        {/foreach}
+                    </tbody>
+                </table>
+            </div>
+        {/if}
+
         {if $vocify_enabled}
             {if isset($vocify_logs) && count($vocify_logs) > 0}
                 <div class="alert alert-info">

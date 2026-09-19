@@ -26,6 +26,17 @@ Flags: `--only wc|ps|rt`, `--keep-up`, `--keep-fixture`, `--skip-build`,
 |---|---|---|
 | shop → platform | `suites/wc.mjs`, `suites/ps.mjs` | a real order fires the plugin's hook, the shipped PHP signs it, the platform stores it |
 | **platform → shop** | `suites/wc-return.mjs` | **a completed call changes the order's status in the shop's own MySQL** |
+| **platform → shop** | `suites/ps-return.mjs` | **the same, for PrestaShop — shop side of the wire only (see below)** |
+
+The PrestaShop return-path suite has its own driver, `./run-ps-return.sh` (flags `--keep-up`,
+`--reuse`), and is deliberately NOT part of `orchestrate.mjs`. The orchestrator's whole preamble —
+contract probe, tenant fixture, dialable-attempt safety gate — exists because its suites write to
+the platform's live Postgres. `ps-return.mjs` writes nothing there: it posts call results straight
+to the shop, the way the platform's outbound adapter would, so it needs no tenant, no database and
+no safety gate. It also needs no tunnel: requests are made from inside the container against the
+shop's own canonical domain pinned to loopback. **The cost of that is worth stating plainly — it
+proves the shop half of the wire, not that the platform can reach a merchant over the internet.**
+Folding it in as a fourth `--only` target is a reasonable next step.
 
 The return-path suite runs against its own stack (`docker-compose.rt.yml`, project
 `vocify-e2e-rt`, port 58081) for a reason the inbound suites do not have: the
@@ -109,6 +120,8 @@ run.sh / run.cmd         entry points (wrap orchestrate.mjs in platform's tsx)
 docker-compose.wc.yml    MariaDB + WordPress; plugin bind-mounted read-only
 docker-compose.ps.yml    MySQL + PrestaShop 8; module bind-mounted read-only
 docker-compose.rt.yml    return-path shop + cloudflared quick tunnel (public https origin)
+docker-compose.ps-return.yml  PrestaShop return-path shop (own project + container names)
+run-ps-return.sh / .mjs  standalone driver for suites/ps-return.mjs
 rt/run-platform-sync.mts one tick of the platform's own syncCompletedOrders()
 fixtures/
   provision-tenant.mjs   throwaway Company/Agent/Integration/ApiKey/Pack (raw SQL)
@@ -118,6 +131,7 @@ lib/                     Postgres access, docker wrappers, report emitter
 suites/wc.mjs            WooCommerce assertions (shop → platform)
 suites/wc-return.mjs     RETURN path assertions (platform → shop)
 suites/ps.mjs            PrestaShop assertions
+suites/ps-return.mjs     PrestaShop RETURN path assertions
 wc/                      WP-CLI provisioning, order fixtures, capture mu-plugin
 ps/                      PrestaShop provisioning, validateOrder() fixture, helpers
 ```
@@ -162,6 +176,23 @@ is merely slow.
   directory" is not a signal — absence also means *not started*, and that check
   passed at 5 seconds. Bootstrapping as the first check is worse: mid-install it
   blocks forever, and `waitFor()` only re-checks its deadline between calls.
+  The return-path driver learned the same lesson a third way: a bootstrap probe
+  alone passes mid-install, provisioning then ran while the installer was still
+  going and its `rm -rf install_e2e` deleted the installer's own fixture
+  directory. The catalogue came out empty (`no active product in the
+  catalogue`), the entrypoint's own cleanup failed, and the container exited 1.
+  It now also waits for one active product — the signal that actually matters to
+  the order fixture.
+- **PrestaShop over HTTP**, which only `ps-return.mjs` does: two more traps.
+  (1) The first front-office request after a cache wipe compiles the Symfony
+  container, and until it has, curl reports a transport failure — which an
+  assertion reading only the status code sees as `HTTP 0` and can mistake for a
+  verdict. The driver warms the front office first. (2) Every container-side PHP
+  helper runs **as www-data**. Booting PrestaShop from a root CLI creates
+  `var/cache/prod/` owned by root, after which Apache cannot write the compiled
+  container into it and EVERY request 500s with
+  `Cannot rename "/tmp/FrontContainer.php…"`. The inbound suites never noticed,
+  because they make no HTTP request to the shop.
 
 Every `docker` invocation in a polling loop carries a per-exec timeout for the
 same reason.

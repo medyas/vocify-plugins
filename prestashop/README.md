@@ -15,6 +15,7 @@ The Vocify AI module for PrestaShop enables automated AI-powered voice confirmat
 ### Features
 
 - ✅ **Automated Order Confirmation Calls**: AI voice calls sent automatically when orders are created or updated
+- ✅ **Order status updated from the call result**: when the call finishes, Vocify AI posts the outcome back and your order moves — confirmed, cancelled, or left alone with a note
 - ✅ **Seamless Integration**: Hooks into PrestaShop order events (`actionValidateOrder`, `actionOrderStatusPostUpdate`)
 - ✅ **Secure Communication**: HMAC-SHA256 signature verification for all webhooks
 - ✅ **Retry Logic**: Automatic retry with exponential backoff for failed webhooks
@@ -136,8 +137,40 @@ Access configuration: **Modules** → **Module Manager** → **Vocify AI** → *
 | **Enable Integration** | Turn the integration on/off | ✅ Yes | Disabled |
 | **Debug Mode** | Enable verbose logging for troubleshooting | No | Disabled |
 | **Webhook URL** | Vocify AI webhook endpoint | ✅ Yes | `https://app.vocify-ai.com/api/webhooks/ecommerce` |
+| **Order status after a CONFIRMED call** | Which of your order statuses is applied when the customer confirms | ✅ Yes | Processing in progress (`PS_OS_PREPARATION`) |
+| **Order status after a CANCELLED call** | Applied when the customer cancels on the phone | ✅ Yes | Cancelled (`PS_OS_CANCELED`) |
+| **Order status after a COMPLETED call** | Applied when the call ends without an explicit yes or no | ✅ Yes | Delivered (`PS_OS_DELIVERED`) |
+| **Call Result URL** | Where Vocify AI posts call results (display-only) | - | Generated |
 | **Store Domain** | Your store domain (auto-detected, read-only) | - | Auto-detected |
 | **Retry Cron URL** | Token-protected URL that re-sends failed webhooks (display-only) | - | Generated |
+
+The three status settings store the numeric order-status **id**, not its name, so renaming or
+translating a status — or running a multi-language shop — never breaks the mapping. Outcomes with
+no purchase-intent meaning (no answer, failed) are recorded on the order but never change its
+status: only the customer saying yes or no moves an order.
+
+### Call Results (the return leg)
+
+When a call finishes, Vocify AI posts the outcome to:
+
+```
+POST {store}/index.php?fc=module&module=vocifyai&controller=webhook
+X-Vocify-Timestamp: 2026-09-19T13:45:02.000Z
+X-Vocify-Signature:  HMAC-SHA256(secret, "{X-Vocify-Timestamp}.{rawBody}")
+```
+
+- It is authenticated with the **same Webhook Signing Secret** as the outbound direction — there is
+  no second credential to manage. ⚠️ **That field must be filled in for order statuses to update.**
+  With no secret configured the endpoint refuses every push (HTTP 503) rather than trusting an
+  unsigned one.
+- A repeat of the same call is a no-op, and an older result from an earlier call can never rewind an
+  order that has already moved on.
+- Results are listed on the order's Vocify AI panel in the back office. (That panel now appears on
+  PrestaShop 8 — it was previously hooked only on `displayAdminOrderLeft`, which 8.x no longer
+  renders, so it never showed up.)
+- ⚠️ The store URL registered in your Vocify AI dashboard must be your shop's **canonical domain**.
+  PrestaShop answers `302 Moved` to any request whose host does not match the shop URL you
+  configured, and Vocify AI treats a redirect as a delivery failure.
 
 ### Test Connection
 
@@ -313,7 +346,7 @@ You can also view logs in admin panel:
 
 ## Database Tables
 
-The module creates two database tables:
+The module creates three database tables:
 
 ### 1. `ps_vocify_webhook_logs`
 
@@ -342,6 +375,22 @@ Queue for failed webhooks requiring retry.
 | `retry_count` | INT | Number of retry attempts |
 | `last_retry_at` | DATETIME | Last retry timestamp |
 | `created_at` | DATETIME | First failure timestamp |
+
+### 3. `ps_vocify_call_results`
+
+Call outcomes received back from Vocify AI. This table is both the merchant-visible record shown on
+the order page and what makes a repeated push a no-op — hence the UNIQUE index on `call_sid`.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id_result` | INT | Primary key |
+| `id_order` | INT | PrestaShop order ID |
+| `call_sid` | VARCHAR(191) | Vocify AI call ID — UNIQUE, so a replay cannot apply twice |
+| `outcome` | VARCHAR(64) | confirmed, cancelled, completed, no_answer, failed |
+| `completed_at` | INT | When the call ended (Unix time); an older result never overwrites a newer one |
+| `id_order_state` | INT | The order status in force after this result |
+| `note` | TEXT | What the merchant reads on the order |
+| `created_at` | DATETIME | When the result was received |
 
 ---
 

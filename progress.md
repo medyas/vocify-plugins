@@ -1,7 +1,7 @@
 # Vocify CMS Plugins - Development Progress
 
 **Last Updated**: 2026-09-19
-**Version**: 1.1.0 (WooCommerce + PrestaShop) — the 2026-09-18 pentest fixes (§6), the 2026-09-19 HMAC timestamp-binding fix (§7) and the four e2e-found bugs of §8 are all in the working tree, commit pending
+**Version**: WooCommerce 1.1.0 / **PrestaShop 1.2.0** — the 2026-09-18 pentest fixes (§6), the 2026-09-19 HMAC timestamp-binding fix (§7), the four e2e-found bugs of §8, the WooCommerce receiver (§9) and the PrestaShop receiver (§10) are all in the working tree, commit pending
 **Branch:** `main` (trunk — decided by the owner 2026-08-16; the old `vocify-v2` gate is retired and the branch was never created here. Work lands on `main` or a short-lived feature branch, pushed to origin.)
 
 > **Update rule (enforced by CLAUDE.md):** this file is the single source of truth for plugin status. Mark a feature 🚧 when you start it; before claiming any feature done, set its row to ✅ with a note, in the same turn as the work. Plugins have no v2 spec rewrite — the webhook contract in `claude.md` is stable; the platform's switch to synchronous intake + LiveKit is invisible to plugins.
@@ -103,6 +103,28 @@ The run aborts before a single container starts if that verdict is anything else
 - **`woocommerce_new_order` can legitimately fire with `total = 0`.** `WC_Abstract_Order::calculate_totals()` saves the order before writing the computed total back, so a payment gateway that builds an order and calls it fires the hook with subtotal 129.9 and total 0 (measured, WC 11.1.1). The plugin forwards whatever the order says and has no zero-total guard.
 - **A dev checkout's `vendor/` breaks PrestaShop outright.** `vocifyai.php:16` loads `vendor/autoload.php` unconditionally; with dev dependencies installed that pulls nikic/php-parser v5, shadowing the v4 PrestaShop depends on, and `bin/console prestashop:module install` dies with an undefined-method error on `PhpParser\ParserFactory` — **no module can be installed at all**. `vendor/` is gitignored and not shipped, so a released zip is unaffected; the harness mounts an empty directory over it to reproduce the shipped state.
 
+### A fourth fix: the panel was invisible on PrestaShop 8
+
+This module writes no `orders.note` and no `CustomerMessage`, so its own order panel is the ONLY
+place a merchant ever sees a call result. That panel was hooked exclusively on
+`displayAdminOrderLeft` — which PrestaShop put in `Hook::$deprecated_hooks` ("from 1.7.7.0") and
+8.x **dispatches nowhere**: `grep -rl displayAdminOrderLeft` over a whole 8.2.8 install matches only
+`classes/Hook.php`'s deprecation list. The panel has therefore been invisible on every 8.x shop
+since it was written in 1.0.0, unnoticed while it only showed webhook logs nobody read.
+
+Fixed by also registering **`displayAdminOrderSide`**, the live hook the order page really renders
+(`src/PrestaShopBundle/Resources/views/Admin/Sell/Order/Order/view.html.twig:63`, same
+`{'id_order': …}` params). `displayAdminOrderLeft` stays registered — it is the live hook on
+1.7.0–1.7.6, which this module still claims to support. Both are asserted in the suite, and the
+upgrade script registers the new one so an upgraded shop is not left with a working return leg
+nobody can see.
+
+Two smaller hardening changes in the same pass: `orderId` is `ctype_digit`-checked before the cast
+to int (`(int)"12abc"` is 12, which would have applied a result to a real order instead of 404-ing),
+and the controller docblock now states that `VOCIFY_ENABLED` is **deliberately not** checked — that
+toggle governs the outbound direction, and a result arriving back is the outcome of a call already
+placed.
+
 ### Verification
 
 | Check | Result |
@@ -120,7 +142,7 @@ The run aborts before a single container starts if that verdict is anything else
 
 ---
 
-## 9. Return path: platform → shop (2026-09-19) ✅ WooCommerce GREEN — 🔴 PrestaShop still has no receiver
+## 9. Return path: platform → shop (2026-09-19) ✅ WooCommerce GREEN — PrestaShop followed in §10
 
 **Question asked:** when an AI call completes, does the merchant's order status change in their shop?
 
@@ -215,8 +237,8 @@ reports a lost race as BLOCKED rather than FAIL).
 
 **Still open:**
 
-1. 🔴 Build the PrestaShop `webhook` front controller to the same contract, then re-point
-   `buildModuleWebhookUrl()` at whatever it actually answers.
+1. ✅ **DONE 2026-09-19 (§10)** — the PrestaShop `webhook` front controller exists and is verified
+   end to end; `buildModuleWebhookUrl()`'s URL was already correct and its comment now says so.
 2. 🟠 Deploy the platform fixes — until then production still pushes nothing (the BLOCKED row above).
 3. 🟡 Bump the WooCommerce plugin to **1.2.0** with a CHANGELOG entry: the receiver is a new feature,
    and merchants must re-check that their signing secret is filled in, since it now authenticates
@@ -226,6 +248,114 @@ reports a lost race as BLOCKED rather than FAIL).
    contract drift without Docker.
 5. 🟡 `calls` rows already at `sync_attempts = 5` are permanently `failed` and will never retry once
    the fixes deploy. If those orders matter, they need a one-off reset.
+
+
+**§9 item 1 is now done — see §10.**
+
+---
+
+## 10. PrestaShop return path: the receiver (2026-09-19) ✅ code + e2e verified — ⏳ commit pending
+
+**Closes §9 "Still open" item 1.** §9 shipped WooCommerce's receiver and left PrestaShop with none:
+`controllers/front/` held only `cron.php`, so the platform's POST hit PrestaShop's 404 page and a
+PrestaShop merchant's orders never moved, whatever the customer said on the phone. This section
+brings PrestaShop to parity with the WooCommerce half, on the same contract.
+
+**Module version bumped 1.1.0 → 1.2.0** (`vocifyai.php`, `composer.json`), because the new table
+needs an upgrade path and an upgrade file only runs when the code version exceeds the installed one.
+WooCommerce's matching bump (§9 item 3) is still open and is the lead's call.
+
+### Files
+
+| File | Change |
+|---|---|
+| `prestashop/classes/VocifyStatusReceiver.php` | **NEW.** All the decision logic: HMAC verification over `"{X-Vocify-Timestamp}.{rawBody}"` with `hash_equals`, a 300 s two-sided freshness window, fail-closed on an unconfigured secret, payload parsing, idempotency/ordering verdicts, the outcome → state mapping, and the merchant-visible note. **Loads without PrestaShop**, which is what makes the branch coverage below possible — `tests/bootstrap.php` deliberately does not bootstrap the CMS, so a `ModuleFrontController` subclass cannot be unit-tested at all. |
+| `prestashop/controllers/front/webhook.php` | **NEW.** Thin adapter: read the raw body and headers, read `Configuration`, call the receiver, load the `Order`, apply with `OrderHistory::changeIdOrderState()` + `add()`, emit JSON. Answers `POST {store}/index.php?fc=module&module=vocifyai&controller=webhook`. |
+| `prestashop/upgrade/upgrade-1.2.0.php` | **NEW.** Creates `vocify_call_results` and seeds the state mapping on shops that installed 1.1.0. Without it an upgraded merchant gets a receiver whose table does not exist: every push 500s, the platform burns its five retries, the order never moves. |
+| `prestashop/vocifyai.php` | Version 1.2.0; requires the receiver; creates/drops `vocify_call_results`; seeds + deletes the state mapping; the double-emission guard and the re-entrancy guard; three `select` settings for the mapping plus a display-only Call Result URL; **registers `displayAdminOrderSide`** (see the third fix below) and renders the panel from either hook; assigns call results to it. |
+| `prestashop/views/templates/admin/order_info.tpl` | Renders the call results on the order page — outcome, timestamp, note; escaped, `pre-wrap`, never as markup. |
+| `prestashop/tests/VocifyStatusReceiverTest.php` | **NEW**, 33 tests. |
+| `prestashop/tests/bootstrap.php` | Loads the new class. |
+| `prestashop/{README,INSTALL,CHANGELOG}.md` | The return leg, the new settings, the new table, and the canonical-domain trap. |
+| **`platform/src/lib/adapters/outbound/prestashop.adapter.ts`** | ⚠️ **CROSS-REPO.** `buildModuleWebhookUrl()`'s URL was already right; its `⚠️ UNVERIFIED` comment is now `✅ VERIFIED` with the measurement, plus the canonical-domain warning. **No behaviour change**; `tsc --noEmit` exit 0. |
+| `test/e2e/docker-compose.ps-return.yml`, `suites/ps-return.mjs`, `run-ps-return.{sh,mjs}`, `ps/post-result.php`, `README.md`, `.gitignore` | The return-path harness — see below. |
+
+### The two decisions the owner delegated
+
+**1. Double webhook emission — real, and fixed.** `PaymentModule::validateOrder()` fires
+`actionValidateOrder` (`classes/PaymentModule.php:560`) and applies the order state ~20 lines later
+via `OrderHistory::changeIdOrderState()`, firing `actionOrderStatusPostUpdate`; the module forwarded
+both, so one new order produced two identical deliveries (§8 recorded this and deliberately left it).
+Fixed with a per-request `array<orderId, state>` static: the post-update is skipped when it carries
+the state already forwarded. **Keyed on the state, not merely the order** — a payment module may
+legitimately call `validateOrder()` and then move the order again in the same request, and a blanket
+"already sent this order" flag would silently swallow that. Measured: 1 log row for a new order
+(was 2), and a *control* assertion proves a genuinely different transition still emits, so the fix
+cannot pass by having killed the hook.
+
+**2. Localised status names — never matched on.** PrestaShop order states live in `order_state_lang`,
+so names are per-language and renameable. The mapping is three `Configuration` keys
+(`VOCIFY_STATE_CONFIRMED` / `_CANCELLED` / `_COMPLETED`) holding numeric `id_order_state` values,
+chosen by the merchant from a `select` of their own statuses, defaulting to PrestaShop's own
+pointers (`PS_OS_PREPARATION` / `PS_OS_CANCELED` / `PS_OS_DELIVERED` — themselves ids). A configured
+state is validated with `Validate::isLoadedObject()` before use and falls back to the PrestaShop
+pointer if the merchant deleted it; if neither resolves, the result is recorded with a `warning`
+rather than a 500. Measured three ways: renaming the target state in `order_state_lang` does not
+break it, repointing the config moves the order somewhere else, and a deleted state falls back.
+
+### A third fix, not asked for but necessary
+
+**Re-entrancy.** `changeIdOrderState()` fires `actionOrderStatusPostUpdate`, which this module
+hooks — so applying an inbound result pushed the order straight back OUT to the platform that had
+just sent it, with the 3×-backoff retry loop behind it, for every call result received. Guarded with
+`VocifyAI::$suppressOutboundWebhooks` around the state change. Asserted: the webhook-log count is
+unchanged by the status change the receiver makes.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `php -l` | ✅ 11/11 clean (php 8.2-cli in Docker), including the two new files and the upgrade script |
+| PHPUnit | ✅ **68 tests / 173 assertions**, up from 35/79. The 35 pre-existing tests still pass; the 33 new ones cover every rejection branch (unconfigured secret → 503, missing signature/timestamp, unparsable and stale and future timestamps, wrong secret, body tampered after signing, body-only signature, signature bound to a different timestamp, non-JSON body, missing orderId/status), idempotency, the ordering guard, and the mapping |
+| **e2e, cold run against PrestaShop 8.2.8** | ✅ **35 passed, 0 failed, 0 skipped, 0 blocked** — `run-ps-return.sh`, from an empty database through a real `PaymentModule::validateOrder()` order, over real HTTP through Apache and PrestaShop's real dispatcher. Headline: `ps_orders.current_state` 2 → 3, read straight from MySQL. Includes three assertions that the note actually **renders** on the order page, via `Hook::exec` |
+| Upgrade path 1.1.0 → 1.2.0 | ✅ Simulated on the live container (drop the table, delete the config, **unregister `displayAdminOrderSide`**, pin `module.version` to 1.1.0): `needsUpgrade=true`, `runUpgradeModule()` `success=true upgraded_to=1.2.0`, table recreated, mapping seeded 3/6/5, hook registered, version bumped — and a push right afterwards returned `200 {"changed":true}` with the panel rendering 5417 bytes |
+| Platform `tsc --noEmit` after the adapter comment edit | ✅ exit 0 |
+
+**What is NOT proven:** the internet leg. This suite posts from inside the container against the
+shop's own canonical domain pinned to loopback, so it proves the whole shop half of the wire and
+nothing about the platform reaching a merchant. That needs a public https origin, which is what
+`docker-compose.rt.yml`'s cloudflared tunnel provides for WooCommerce; a PrestaShop equivalent means
+rewriting `ps_shop_url` after the tunnel hostname is known, and was not built here.
+
+### Traps found along the way (all in the harness, none in the module)
+
+- **PrestaShop 302s a request whose `Host` is not the canonical shop domain**, before the module
+  controller runs. The platform fetches with `redirect: 'error'`, so that is a hard delivery
+  failure. Documented in the adapter, the README and INSTALL.md — merchants must register their
+  canonical domain.
+- **A root-run CLI poisons `var/cache/prod/` for Apache** → every front-office request 500s with
+  `Cannot rename "/tmp/FrontContainer.php…"`. Every container-side helper now runs as `www-data`.
+- **A bootstrap-only readiness probe passes mid-install**, so provisioning's `rm -rf install_e2e`
+  deleted the installer's own fixture directory: empty catalogue, container exit 1. The driver now
+  waits for the entrypoint's log marker, then a bootstrap, then one active product.
+- **`OrderHistory` across the `shipped` boundary needs an employee.** `set-status.php` boots the
+  Symfony kernel, so the stock-movement insert runs and dies on `Column 'id_employee' cannot be
+  null`. **The receiver is unaffected** — from a front controller `SymfonyContainer::getInstance()`
+  is null and `StockManager::saveMovement()` returns early. Measured separately: a `completed`
+  outcome mapped to `PS_OS_DELIVERED` moved an order 2 → 5, `200 {"changed":true}`.
+
+### Still open
+
+1. 🟡 A PrestaShop equivalent of `docker-compose.rt.yml` (tunnel + `ps_shop_url` rewrite) would
+   close the last gap — the platform actually reaching a PrestaShop merchant over the internet.
+2. 🟡 `suites/ps-return.mjs` is driven by its own runner, not `orchestrate.mjs`. Folding it in as a
+   fourth `--only` target is a small change to a shared file and was left to its owner.
+3. 🟡 The WooCommerce receiver still has no PHPUnit coverage (§9 item 4). The PrestaShop split —
+   decision logic in a CMS-free class, controller as a thin adapter — is the pattern that would make
+   it possible there too.
+4. ⏳ Commit + push on `main` — deliberately **not** committed; the lead reviews the working tree.
+
+The e2e stack was torn down (`down -v`); no `vocify-e2e-*` container is left running.
 
 ---
 

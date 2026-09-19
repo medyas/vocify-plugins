@@ -5,7 +5,7 @@
  * @author Vocify AI
  * @copyright 2025 Vocify AI
  * @license MIT License
- * @version 1.1.0
+ * @version 1.2.0
  */
 
 if (!defined('_PS_VERSION_')) {
@@ -21,9 +21,52 @@ require_once dirname(__FILE__) . '/classes/VocifySigner.php';
 require_once dirname(__FILE__) . '/classes/VocifyPayloadBuilder.php';
 require_once dirname(__FILE__) . '/classes/VocifyPayloadValidator.php';
 require_once dirname(__FILE__) . '/classes/VocifyWebhookService.php';
+require_once dirname(__FILE__) . '/classes/VocifyStatusReceiver.php';
 
 class VocifyAI extends Module
 {
+    /**
+     * Set by the `webhook` front controller while it applies an inbound call
+     * result, and checked by `hookActionOrderStatusPostUpdate()`.
+     *
+     * `OrderHistory::changeIdOrderState()` fires `actionOrderStatusPostUpdate`,
+     * so applying a result the platform just pushed would immediately push the
+     * same order back OUT to the platform. Nothing breaks — the platform
+     * dedupes — but the shop would make a signed HTTPS round trip, with a
+     * 3×-backoff retry loop behind it, for every call result it receives.
+     *
+     * A static is the right shape: the hook fires synchronously inside the
+     * same request, in the same process, between the two assignments.
+     *
+     * @var bool
+     */
+    public static $suppressOutboundWebhooks = false;
+
+    /**
+     * Order id => the `current_state` most recently forwarded for that order
+     * in THIS request.
+     *
+     * ⚠️ This is the double-emission fix. One new order used to produce TWO
+     * webhooks back to back: `PaymentModule::validateOrder()` fires
+     * `actionValidateOrder` (classes/PaymentModule.php:560) and then applies
+     * the order state roughly twenty lines later via
+     * `OrderHistory::changeIdOrderState()`, which fires
+     * `actionOrderStatusPostUpdate` — and this module forwarded both. The
+     * second carried the same order in the same state as the first, so it was
+     * pure duplication: measured as 201 followed by 200-idempotent, doubling
+     * every merchant's webhook volume (PROGRESS.md §8, "Observations").
+     *
+     * Keyed on the STATE and not merely on the order, because a payment module
+     * may legitimately call `validateOrder()` and then move the order again in
+     * the same request (`PS_OS_PREPARATION` after `PS_OS_PAYMENT`, say). A
+     * blanket per-request "already sent this order" flag would silently drop
+     * that second, genuinely different transition; comparing the state keeps
+     * it.
+     *
+     * @var array<int,int>
+     */
+    private static $forwardedStates = array();
+
     /**
      * Constructor
      */
@@ -31,7 +74,7 @@ class VocifyAI extends Module
     {
         $this->name = 'vocifyai';
         $this->tab = 'administration';
-        $this->version = '1.1.0';
+        $this->version = '1.2.0';
         $this->author = 'Vocify AI';
         $this->need_instance = 0;
         $this->ps_versions_compliancy = array('min' => '1.7.0', 'max' => _PS_VERSION_);
@@ -54,6 +97,21 @@ class VocifyAI extends Module
         return parent::install() &&
             $this->registerHook('actionValidateOrder') &&
             $this->registerHook('actionOrderStatusPostUpdate') &&
+            // ⚠️ BOTH, deliberately. `displayAdminOrderLeft` is the only hook
+            // this module registered until 2026-09-19, and on PrestaShop 8 it
+            // renders NOTHING: it is in `Hook::$deprecated_hooks` ("from
+            // 1.7.7.0") and the back office's order page does not dispatch it —
+            // `grep -rl displayAdminOrderLeft` over the whole install matches
+            // only `classes/Hook.php`'s deprecation list. The panel has
+            // therefore been invisible on every PS 8 shop since it was written,
+            // which nobody noticed while it only showed webhook logs.
+            //
+            // `displayAdminOrderSide` is its live replacement — the order
+            // page's right column, `Admin/Sell/Order/Order/view.html.twig:63`,
+            // called with the same `{'id_order': …}` params. The legacy hook
+            // stays registered for 1.7.0–1.7.6 shops, which this module still
+            // claims to support.
+            $this->registerHook('displayAdminOrderSide') &&
             $this->registerHook('displayAdminOrderLeft') &&
             $this->createTables() &&
             $this->installConfiguration();
@@ -108,6 +166,36 @@ class VocifyAI extends Module
             KEY `status` (`status`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
 
+        // Table for call results pushed BACK from the platform (the return
+        // leg). PrestaShop has no per-order meta API the way WooCommerce does,
+        // so the idempotency record needs a home of its own — and since it has
+        // to exist anyway, it doubles as the merchant-visible note: the
+        // module's order panel renders these rows.
+        //
+        // `call_sid` is UNIQUE and NULLable: the UNIQUE index is what makes a
+        // replayed push a no-op even under concurrency, and MySQL permits any
+        // number of NULLs in one, so results the platform sent without a
+        // callSid are all recorded rather than colliding. 191 characters, not
+        // 255, so the index fits in utf8mb4's 767-byte key limit on older
+        // MySQL.
+        //
+        // `completed_at` is a Unix timestamp rather than a DATETIME: it is
+        // compared against `callData.completedAt` from the platform, and an
+        // integer comparison has no timezone to get wrong.
+        $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'vocify_call_results` (
+            `id_result` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+            `id_order` INT(11) UNSIGNED NOT NULL,
+            `call_sid` VARCHAR(191) NULL DEFAULT NULL,
+            `outcome` VARCHAR(64) NOT NULL,
+            `completed_at` INT(11) UNSIGNED NOT NULL DEFAULT 0,
+            `id_order_state` INT(11) UNSIGNED NOT NULL DEFAULT 0,
+            `note` TEXT,
+            `created_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id_result`),
+            UNIQUE KEY `call_sid` (`call_sid`),
+            KEY `id_order` (`id_order`)
+        ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
+
         foreach ($sql as $query) {
             if (!Db::getInstance()->execute($query)) {
                 return false;
@@ -127,6 +215,7 @@ class VocifyAI extends Module
         $sql = array(
             'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'vocify_failed_webhooks`',
             'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'vocify_webhook_logs`',
+            'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'vocify_call_results`',
         );
 
         foreach ($sql as $query) {
@@ -148,12 +237,42 @@ class VocifyAI extends Module
         // The cron token must exist on install so cron.php can be secured.
         $cronToken = Tools::passwdGen(32);
 
-        return Configuration::updateValue('VOCIFY_API_KEY', '') &&
+        $ok = Configuration::updateValue('VOCIFY_API_KEY', '') &&
             Configuration::updateValue('VOCIFY_SIGNATURE_SECRET', '') &&
             Configuration::updateValue('VOCIFY_ENABLED', false) &&
             Configuration::updateValue('VOCIFY_DEBUG_MODE', false) &&
             Configuration::updateValue('VOCIFY_WEBHOOK_URL', 'https://app.vocify-ai.com/api/webhooks/ecommerce') &&
             Configuration::updateValue('VOCIFY_CRON_TOKEN', $cronToken);
+
+        return $ok && $this->installStateMapping();
+    }
+
+    /**
+     * Seed the outcome → order-state mapping used by the return leg.
+     *
+     * Stored as numeric `id_order_state` values, resolved from PrestaShop's
+     * OWN state pointers (`PS_OS_PREPARATION`, `PS_OS_CANCELED`,
+     * `PS_OS_DELIVERED`). Never from a state name: names live in
+     * `order_state_lang`, so they are per-language and the merchant can rename
+     * them, and a module that matched "Payment accepted" would break on a
+     * French shop, a renamed state, or a second language.
+     *
+     * A missing pointer is written as 0 rather than guessed; the receiver
+     * treats 0 as "no usable state", records the result and warns.
+     *
+     * @return bool
+     */
+    private function installStateMapping()
+    {
+        $defaults = VocifyStatusReceiver::defaultStateKeys();
+        $ok = true;
+
+        foreach (VocifyStatusReceiver::stateConfigKeys() as $outcome => $configKey) {
+            $stateId = isset($defaults[$outcome]) ? (int)Configuration::get($defaults[$outcome]) : 0;
+            $ok = Configuration::updateValue($configKey, $stateId) && $ok;
+        }
+
+        return $ok;
     }
 
     /**
@@ -163,12 +282,18 @@ class VocifyAI extends Module
      */
     private function deleteConfiguration()
     {
-        return Configuration::deleteByName('VOCIFY_API_KEY') &&
+        $ok = Configuration::deleteByName('VOCIFY_API_KEY') &&
             Configuration::deleteByName('VOCIFY_SIGNATURE_SECRET') &&
             Configuration::deleteByName('VOCIFY_ENABLED') &&
             Configuration::deleteByName('VOCIFY_DEBUG_MODE') &&
             Configuration::deleteByName('VOCIFY_WEBHOOK_URL') &&
             Configuration::deleteByName('VOCIFY_CRON_TOKEN');
+
+        foreach (VocifyStatusReceiver::stateConfigKeys() as $configKey) {
+            $ok = Configuration::deleteByName($configKey) && $ok;
+        }
+
+        return $ok;
     }
 
     /**
@@ -209,6 +334,11 @@ class VocifyAI extends Module
             $order->current_state = (int)$params['orderStatus']->id;
         }
 
+        // Remember what went out, so the `actionOrderStatusPostUpdate` that
+        // validateOrder() triggers moments later for the SAME state does not
+        // send it a second time. See self::$forwardedStates.
+        self::$forwardedStates[(int)$order->id] = (int)$order->current_state;
+
         $this->sendOrderWebhook($order);
     }
 
@@ -224,6 +354,14 @@ class VocifyAI extends Module
             return;
         }
 
+        // The platform is applying a call result it just pushed to us. Sending
+        // the resulting status change straight back would be a pointless round
+        // trip (and a retry loop behind it) for something the platform already
+        // knows — it is what told us. See self::$suppressOutboundWebhooks.
+        if (self::$suppressOutboundWebhooks) {
+            return;
+        }
+
         if (!isset($params['id_order'])) {
             return;
         }
@@ -234,8 +372,22 @@ class VocifyAI extends Module
             return;
         }
 
-        // Only send webhook for specific status changes if needed
-        // For now, we'll send on every status update
+        // The duplicate that PaymentModule::validateOrder() produces: it fires
+        // actionValidateOrder, then applies the very same state a few lines
+        // later, firing this hook. Forwarding both doubles a merchant's
+        // webhook volume for no information — the second delivery carries the
+        // identical order in the identical state. A LATER, genuinely different
+        // transition still goes out, because the comparison is on the state
+        // and not merely on the order. See self::$forwardedStates.
+        $orderId = (int)$order->id;
+        $state = (int)$order->current_state;
+
+        if (isset(self::$forwardedStates[$orderId]) && self::$forwardedStates[$orderId] === $state) {
+            return;
+        }
+
+        self::$forwardedStates[$orderId] = $state;
+
         $this->sendOrderWebhook($order);
     }
 
@@ -246,6 +398,34 @@ class VocifyAI extends Module
      * @return string
      */
     public function hookDisplayAdminOrderLeft($params)
+    {
+        return $this->renderAdminOrderPanel($params);
+    }
+
+    /**
+     * Hook: the same panel, on the hook PrestaShop 8 actually dispatches.
+     *
+     * `displayAdminOrderLeft` is deprecated from 1.7.7.0 and rendered nowhere
+     * in 8.x, so on a modern shop the panel below — including the call results
+     * the merchant is supposed to read — was never on the page at all. See the
+     * comment in install().
+     *
+     * @param array $params
+     * @return string
+     */
+    public function hookDisplayAdminOrderSide($params)
+    {
+        return $this->renderAdminOrderPanel($params);
+    }
+
+    /**
+     * Render the module's panel on an order's back-office page: the call
+     * results pushed back by the platform, and the outbound webhook history.
+     *
+     * @param array $params
+     * @return string
+     */
+    private function renderAdminOrderPanel($params)
     {
         if (!isset($params['id_order'])) {
             return '';
@@ -261,8 +441,22 @@ class VocifyAI extends Module
             LIMIT 5'
         );
 
+        // Results pushed BACK by the platform after a call. This is the
+        // merchant-visible note for the return leg: PrestaShop has no
+        // per-order note stream like WooCommerce's, and the row has to exist
+        // for idempotency anyway, so it is rendered here rather than
+        // duplicated into a CustomerThread or appended to the merchant's own
+        // `orders.note` field.
+        $results = Db::getInstance()->executeS(
+            'SELECT * FROM `' . _DB_PREFIX_ . 'vocify_call_results`
+            WHERE `id_order` = ' . $orderId . '
+            ORDER BY `id_result` DESC
+            LIMIT 10'
+        );
+
         $this->context->smarty->assign(array(
             'vocify_logs' => $logs,
+            'vocify_call_results' => $results,
             'vocify_enabled' => Configuration::get('VOCIFY_ENABLED'),
         ));
 
@@ -344,12 +538,40 @@ class VocifyAI extends Module
             return $this->displayError($this->l('Invalid webhook URL. It must be an absolute https:// URL to a public host, e.g. https://app.vocify-ai.com/api/webhooks/ecommerce'));
         }
 
+        // Outcome → order state. Submitted as numeric id_order_state values
+        // chosen from this shop's own states, never as names: names live in
+        // `order_state_lang`, so they are per-language and renameable. Each id
+        // is validated against a real OrderState before it is stored, so a
+        // tampered or stale form cannot point the return leg at a state that
+        // does not exist.
+        $stateValues = array();
+
+        foreach (VocifyStatusReceiver::stateConfigKeys() as $outcome => $configKey) {
+            $stateId = (int)Tools::getValue($configKey);
+
+            if ($stateId > 0) {
+                $state = new OrderState($stateId);
+
+                if (!Validate::isLoadedObject($state)) {
+                    return $this->displayError(
+                        $this->l('Unknown order status selected for call outcome: ') . $outcome
+                    );
+                }
+            }
+
+            $stateValues[$configKey] = $stateId;
+        }
+
         // Update configuration
         Configuration::updateValue('VOCIFY_API_KEY', $apiKey);
         Configuration::updateValue('VOCIFY_SIGNATURE_SECRET', $signatureSecret);
         Configuration::updateValue('VOCIFY_ENABLED', (bool)$enabled);
         Configuration::updateValue('VOCIFY_DEBUG_MODE', (bool)$debugMode);
         Configuration::updateValue('VOCIFY_WEBHOOK_URL', $webhookUrl);
+
+        foreach ($stateValues as $configKey => $stateId) {
+            Configuration::updateValue($configKey, $stateId);
+        }
 
         return $this->displayConfirmation($this->l('Settings updated successfully'));
     }
@@ -534,6 +756,34 @@ class VocifyAI extends Module
                         'autocomplete' => false,
                     ),
                     array(
+                        'type' => 'select',
+                        'label' => $this->l('Order status after a CONFIRMED call'),
+                        'name' => 'VOCIFY_STATE_CONFIRMED',
+                        'desc' => $this->l('Applied when the customer confirms the order on the phone. Leave on the default unless you use a custom status.'),
+                        'options' => $this->getOrderStateOptions(),
+                    ),
+                    array(
+                        'type' => 'select',
+                        'label' => $this->l('Order status after a CANCELLED call'),
+                        'name' => 'VOCIFY_STATE_CANCELLED',
+                        'desc' => $this->l('Applied when the customer cancels the order on the phone.'),
+                        'options' => $this->getOrderStateOptions(),
+                    ),
+                    array(
+                        'type' => 'select',
+                        'label' => $this->l('Order status after a COMPLETED call'),
+                        'name' => 'VOCIFY_STATE_COMPLETED',
+                        'desc' => $this->l('Applied when the call finishes without an explicit confirmation or cancellation. Outcomes with no purchase-intent meaning (no answer, failed) never change the status - they are recorded on the order only.'),
+                        'options' => $this->getOrderStateOptions(),
+                    ),
+                    array(
+                        'type' => 'html',
+                        'label' => $this->l('Call Result URL'),
+                        'name' => 'return_url_display',
+                        'html_content' => '<p class="form-control-static"><code>' . htmlspecialchars($this->getReturnWebhookUrl(), ENT_QUOTES, 'UTF-8') . '</code></p>
+                                         <p class="help-block">' . $this->l('Vocify AI posts call results back to this URL. It is authenticated with the same Webhook Signing Secret above, so that field must be filled in for order statuses to update.') . '</p>',
+                    ),
+                    array(
                         'type' => 'html',
                         'label' => $this->l('Store Domain'),
                         'name' => 'store_domain_display',
@@ -571,13 +821,77 @@ class VocifyAI extends Module
      */
     private function getConfigFormValues()
     {
-        return array(
+        $values = array(
             'VOCIFY_API_KEY' => Configuration::get('VOCIFY_API_KEY'),
             'VOCIFY_SIGNATURE_SECRET' => Configuration::get('VOCIFY_SIGNATURE_SECRET'),
             'VOCIFY_ENABLED' => Configuration::get('VOCIFY_ENABLED'),
             'VOCIFY_DEBUG_MODE' => Configuration::get('VOCIFY_DEBUG_MODE'),
             'VOCIFY_WEBHOOK_URL' => Configuration::get('VOCIFY_WEBHOOK_URL'),
         );
+
+        $defaults = VocifyStatusReceiver::defaultStateKeys();
+
+        foreach (VocifyStatusReceiver::stateConfigKeys() as $outcome => $configKey) {
+            $stateId = (int)Configuration::get($configKey);
+
+            // An install that predates the return leg has no value stored yet,
+            // so show PrestaShop's own default rather than an empty select
+            // that would save 0 on the merchant's next Save.
+            if ($stateId <= 0 && isset($defaults[$outcome])) {
+                $stateId = (int)Configuration::get($defaults[$outcome]);
+            }
+
+            $values[$configKey] = $stateId;
+        }
+
+        return $values;
+    }
+
+    /**
+     * The shop's own order states, for the outcome → status selects.
+     *
+     * Names are read in the employee's language purely for DISPLAY. What the
+     * form submits and what the module stores is the numeric
+     * `id_order_state`, so renaming or translating a status later cannot
+     * break the mapping.
+     *
+     * @return array HelperForm `options` structure.
+     */
+    private function getOrderStateOptions()
+    {
+        $states = OrderState::getOrderStates((int)$this->context->language->id);
+        $options = array();
+
+        foreach ($states as $state) {
+            $options[] = array(
+                'id_option' => (int)$state['id_order_state'],
+                'name' => $state['name'],
+            );
+        }
+
+        return array(
+            'query' => $options,
+            'id' => 'id_option',
+            'name' => 'name',
+        );
+    }
+
+    /**
+     * The URL the platform POSTs call results to.
+     *
+     * The `index.php?fc=module…` dispatcher form, not the `/module/<m>/<c>`
+     * friendly-URL rewrite: the latter only resolves when friendly URLs are
+     * switched on, which is a per-shop setting the platform cannot see.
+     * `Link::getModuleLink()` returns whichever form this shop is configured
+     * for, so the canonical one is built explicitly here to match what the
+     * platform's `buildModuleWebhookUrl()` targets.
+     *
+     * @return string
+     */
+    private function getReturnWebhookUrl()
+    {
+        return Tools::getShopDomainSsl(true) . __PS_BASE_URI__
+            . 'index.php?fc=module&module=' . $this->name . '&controller=webhook';
     }
 
     /**

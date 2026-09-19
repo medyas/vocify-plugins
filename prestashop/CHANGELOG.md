@@ -19,6 +19,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-09-19
+
+### Added
+
+- **Call-result receiver — the return leg.** New front controller
+  `controllers/front/webhook.php`, answering
+  `POST {store}/index.php?fc=module&module=vocifyai&controller=webhook`. Vocify AI posts the
+  outcome of a completed call there and the order's status changes in PrestaShop. Until now the
+  module only pushed orders OUT; a merchant's orders never moved no matter what the customer said
+  on the phone.
+- **Authentication for the return leg.** HMAC-SHA256 over `"{X-Vocify-Timestamp}.{rawBody}"`,
+  compared with `hash_equals`, inside a 300-second two-sided freshness window. It uses the **same
+  Webhook Signing Secret** already configured for the outbound direction — there is no second
+  credential — and **fails closed**: with no secret configured the endpoint refuses everything
+  (HTTP 503) rather than accepting unsigned pushes. ⚠️ **Merchants upgrading must make sure that
+  field is filled in**: it now authenticates both directions.
+- **Configurable outcome → order status mapping.** Three new settings choose which of *your* order
+  statuses a confirmed, cancelled or completed call applies. They store the numeric order-status
+  id, not its name, so renaming or translating a status never breaks the mapping. Defaults:
+  `PS_OS_PREPARATION`, `PS_OS_CANCELED`, `PS_OS_DELIVERED`. Outcomes with no purchase-intent
+  meaning (no answer, failed) are recorded on the order but never change its status.
+- **Call results on the order page.** The module's existing order panel now lists what happened on
+  each call — outcome, duration, completion time, call id.
+- **New table `vocify_call_results`** (with an `upgrade/upgrade-1.2.0.php` migration for existing
+  installs). `call_sid` is UNIQUE, which is what makes a repeated push a no-op.
+
+### Fixed
+
+- **One order no longer sends two webhooks.** `PaymentModule::validateOrder()` fires
+  `actionValidateOrder` and then applies the order status moments later, firing
+  `actionOrderStatusPostUpdate`; the module forwarded both, so every new order produced two
+  identical deliveries. The second is now suppressed. A genuinely different status change later on
+  is still forwarded.
+- **Applying a call result no longer echoes back to Vocify AI.** Changing the order status fires
+  `actionOrderStatusPostUpdate`, which used to push the order straight back out to the platform
+  that had just sent the result — one signed HTTPS round trip, with the 3×-backoff retry loop
+  behind it, per call received.
+
+### Notes
+
+- **The Vocify AI panel on the order page now actually appears on PrestaShop 8.** It was hooked only
+  on `displayAdminOrderLeft`, which PrestaShop deprecated in 1.7.7.0 and 8.x renders nowhere, so the
+  panel had been invisible on every 8.x shop. It is now also hooked on `displayAdminOrderSide`; the
+  legacy hook stays registered for 1.7.0–1.7.6.
+- Call results are accepted even when **Enable Integration** is off. That toggle governs whether
+  this shop forwards its orders *out*; a result arriving back is the outcome of a call that was
+  already placed, and dropping it would lose real information and leave the order stuck.
+- An older result from a different call can no longer rewind an order: results carry
+  `completedAt`, and one older than the last applied is answered `200 {"changed": false}` without
+  touching the order.
+- ⚠️ The store URL configured in the Vocify AI dashboard must be the shop's **canonical domain**.
+  PrestaShop answers `302 Moved` to any request whose `Host` does not match the configured shop
+  URL, and the platform treats a redirect as a hard failure.
+
+---
+
 ## [1.1.0] - 2026-08-14
 
 ### Changed

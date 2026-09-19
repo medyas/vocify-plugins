@@ -143,8 +143,17 @@ async function postToReceiver(storeUrl, secret, payload, opts = {}) {
  * phases of the same tick, and letting the billing phase act on this row would
  * make a sync failure and a billing failure indistinguishable in the tick's
  * summary.
+ *
+ * `held: true` inserts the row with `outcome=NULL` instead of the real value.
+ * `syncCompletedOrders()`'s candidate query requires `outcome: { not: null }`
+ * (platform/src/lib/services/ecommerce-sync.service.ts), so a held call is
+ * invisible to EVERY tick — the deployed platform's scheduled one included —
+ * until `releaseHeldCall()` below writes the real outcome. Used by the
+ * failure-accounting block to close the window during which the deployed
+ * platform's per-minute cron could claim the fixture before the harness has
+ * finished setting up the failure scenario around it.
  */
-async function synthesiseCompletedCall(sql, fixture, orderId, outcome) {
+async function synthesiseCompletedCall(sql, fixture, orderId, outcome, { held = false } = {}) {
   const latest = (
     await sql.query(
       `SELECT a.id, a.attempt_number, a.customer_phone, (c.id IS NOT NULL) AS has_call
@@ -189,7 +198,7 @@ async function synthesiseCompletedCall(sql, fixture, orderId, outcome) {
                           sync_status, sync_attempts, billing_status, created_at)
        VALUES ($1,$2,$3,'outbound',$4,$5,$6,42, now() - interval '42 seconds', now(),
                'pending', 0, 'skipped', now())`,
-      [callId, attemptId, fixture.companyId, fixture.agentId, latest.customer_phone, outcome]
+      [callId, attemptId, fixture.companyId, fixture.agentId, latest.customer_phone, held ? null : outcome]
     );
     await sql.query('COMMIT');
   } catch (err) {
@@ -197,6 +206,38 @@ async function synthesiseCompletedCall(sql, fixture, orderId, outcome) {
     throw err;
   }
   return { callId, attemptId };
+}
+
+/** Make a HELD call visible by writing its real outcome. See `held` above. */
+async function releaseHeldCall(sql, callId, outcome) {
+  await sql.query(`UPDATE calls SET outcome=$1 WHERE id=$2`, [outcome, callId]);
+}
+
+/**
+ * The deployed platform's e-commerce sync is a Cloudflare Cron Trigger fixed
+ * at `"* * * * *"` (platform/wrangler.jsonc) — the top of every UTC minute,
+ * not "every ~60s from whenever it last ran". Waiting until we're a few
+ * seconds past a boundary, with most of the minute still ahead, means the
+ * harness's own critical section — release the held call, then run ONE local
+ * sync tick — has room to finish before the next trigger can fire.
+ *
+ * Cloudflare's dispatch is best-effort and can lag its schedule under load, so
+ * this narrows the race without claiming to eliminate it — `racedByDeployedCron`
+ * below is the actual honesty check, and stays.
+ */
+async function waitForSafeCronWindow(expectedTickMs = 15000) {
+  const START_S = 5; // clears dispatch jitter + a few seconds of clock skew
+  const MARGIN_S = 10; // extra slack beyond the measured tick duration
+  // Latest second we may START the release+tick step so it still finishes at
+  // least MARGIN_S before the next top-of-minute trigger, given how long the
+  // subprocess actually took earlier in THIS run (see the §5 measurement).
+  const rawEnd = 60 - Math.ceil(expectedTickMs / 1000) - MARGIN_S;
+  const END_S = Math.min(45, Math.max(START_S + 5, rawEnd));
+  for (;;) {
+    const s = new Date().getUTCSeconds();
+    if (s >= START_S && s <= END_S) return;
+    await new Promise((r) => setTimeout(r, 500));
+  }
 }
 
 const dialableAttempts = async (sql) =>
@@ -333,7 +374,12 @@ export async function runWooCommerceReturnSuite({ rec, sql, fixture, storeUrl, b
   await sql.query(`UPDATE orders SET status='SCHEDULED' WHERE id=$1`, [platformOrder.id]);
 
   // ── 5. the working tree, end to end ──────────────────────────────────────
+  const tickStartedAt = Date.now();
   const tick = await runLocalSyncTick();
+  // Timed so the failure-accounting block below (§9) can size its cron-race
+  // safety window off a real measurement from this run instead of a guess.
+  const tickMs = Date.now() - tickStartedAt;
+  notes.push(`runLocalSyncTick() subprocess took ${tickMs}ms (node+tsx spawn + one DB round trip + one HTTPS push).`);
   rec.record({
     name: 'the working-tree sync phase reports one call synced',
     outcome: tick.ok && tick.result?.synced === 1 && tick.result?.failed === 0 ? 'PASS' : 'FAIL',
@@ -539,101 +585,166 @@ export async function runWooCommerceReturnSuite({ rec, sql, fixture, storeUrl, b
   // (Pointing `store_url` at a bogus path does NOT work: `?rest_route=` is
   // honoured from any path, so `https://shop/no-such-shop/?rest_route=…` is
   // still served by the REST API. Measured — it returned 200.)
-  const { callId: failCallId } = await synthesiseCompletedCall(
-    sql,
-    fixture,
-    platformOrder.id,
-    'confirmed'
-  ).catch((err) => {
-    rec.blocked('failure accounting: second completed call', err.message);
-    return { callId: null };
-  });
+  //
+  // RACE NOTE (measured 2026-09-19): the deployed platform runs this exact
+  // tick on a Cloudflare Cron Trigger fixed at "* * * * *" — the top of every
+  // UTC minute (platform/wrangler.jsonc), not "every ~60s from last run". The
+  // previous version of this block inserted the call with its real outcome
+  // immediately, then spent several seconds of `composeExec` (docker exec
+  // into WordPress) plus SQL round trips before ever running the local tick —
+  // long enough to straddle a minute boundary. The end state that was
+  // observed (`sync_status=synced, sync_attempts=4`) can only mean the
+  // deployed tick claimed and successfully pushed the call WHILE the secret
+  // clear was still in flight, before this block got to break it.
+  //
+  // Fix, in two parts:
+  //   1. The call is synthesised HELD (`outcome=NULL`), invisible to every
+  //      tick's candidate query, for the entire setup — clearing the secret,
+  //      bumping sync_attempts — none of which needs the row to be visible.
+  //   2. Only immediately before running the local tick is the call released
+  //      (outcome written) and raced, timed to start just past a minute
+  //      boundary (`waitForSafeCronWindow`) so the deployed trigger cannot
+  //      land inside the release→tick step.
+  // `racedByDeployedCron` stays as the honesty check: Cloudflare's dispatch is
+  // best-effort and can lag its schedule, so a residual race is conceivable,
+  // and this must report BLOCKED rather than a false PASS if it ever fires.
+  // Two tries (each with a fresh held call — `calls.attempt_id` is UNIQUE, so
+  // a retry needs a new Attempt anyway, same as a real retry would) make that
+  // vanishingly unlikely without weakening the check itself.
+  await composeExec(COMPOSE, SVC, [
+    'wp',
+    '--allow-root',
+    'option',
+    'update',
+    'vocify_signature_secret',
+    '',
+  ]);
 
-  if (failCallId) {
-    await composeExec(COMPOSE, SVC, [
-      'wp',
-      '--allow-root',
-      'option',
-      'update',
-      'vocify_signature_secret',
-      '',
-    ]);
-    // ⚠️ The deployed platform runs this same tick on a ~60s schedule (measured
-    // 2026-09-19: a pending call's sync_attempts climbed 0→1→2→3 untouched).
-    // Starting at MAX_SYNC_ATTEMPTS - 1 means the first failing tick — whoever
-    // runs it — takes the call terminal, so at most ONE tick can act on it and
-    // the two possible outcomes are distinguishable below.
-    await sql.query(`UPDATE calls SET sync_attempts=4 WHERE id=$1`, [failCallId]);
+  const MAX_TRIES = 2;
+  const raceAttemptCallIds = []; // every held call synthesised below, raced or not — all need terminalising
+  let failCallId = null;
+  let failTick = null;
+  let failed = null;
+  let orderDuringFailure = null;
+  let racedByDeployedCron = false;
+  let synthesiseErr = null;
+
+  for (let attemptNo = 1; attemptNo <= MAX_TRIES && !failCallId; attemptNo++) {
+    const synth = await synthesiseCompletedCall(
+      sql,
+      fixture,
+      platformOrder.id,
+      'confirmed',
+      { held: true }
+    ).catch((err) => {
+      synthesiseErr = err;
+      return null;
+    });
+    if (!synth) break;
+    raceAttemptCallIds.push(synth.callId);
+
+    // ⚠️ Still start at MAX_SYNC_ATTEMPTS - 1: the first tick to act on this
+    // call — whoever runs it — takes it terminal, so at most one tick can act
+    // on it and the two possible outcomes stay distinguishable below.
+    await sql.query(`UPDATE calls SET sync_attempts=4 WHERE id=$1`, [synth.callId]);
     await sql.query(`UPDATE orders SET status='SCHEDULED' WHERE id=$1`, [platformOrder.id]);
 
-    const failTick = await runLocalSyncTick();
-    const failed = await callRow(sql, failCallId);
-    const orderDuringFailure = await orderRow(sql, platformOrder.id);
+    await waitForSafeCronWindow(tickMs);
+    await releaseHeldCall(sql, synth.callId, 'confirmed');
+    const tick = await runLocalSyncTick();
+    const row = await callRow(sql, synth.callId);
     // `{synced:0, failed:0}` means a scheduled tick on the DEPLOYED build got
     // there first and the working-tree code never saw this call — an honest
     // "not evaluated", not a pass and not a failure of the code under test.
-    const racedByDeployedCron = failTick.result?.failed === 0 && failTick.result?.synced === 0;
+    const raced = tick.result?.failed === 0 && tick.result?.synced === 0;
 
-    if (racedByDeployedCron) {
-      const reason =
-        'a scheduled cron tick on the DEPLOYED build claimed this call first ' +
-        `(tick saw nothing to do; call is now ${JSON.stringify(failed)}, order ${orderDuringFailure.status}). ` +
-        'The deployed platform runs the same tick every ~60s against the same database.';
-      rec.blocked('a shop that rejects the push is counted as a failed sync', reason);
-      rec.blocked('a failed push increments sync_attempts and takes the call terminal', reason);
-      rec.blocked('REGRESSION GUARD: a failed push does NOT flip the platform Order status', reason);
-      rec.blocked('the receiver fails closed when no signing secret is configured', reason);
-    } else {
-      rec.record({
-        name: 'a shop that rejects the push is counted as a failed sync, not a silent success',
-        outcome: failTick.result?.failed === 1 && failTick.result?.synced === 0 ? 'PASS' : 'FAIL',
-        expected: '{synced: 0, failed: 1}',
-        actual: JSON.stringify(failTick.result),
-      });
-      rec.record({
-        name: 'a failed push increments sync_attempts and takes the call terminal at the cap',
-        outcome: failed.sync_attempts === 5 && failed.sync_status === 'failed' ? 'PASS' : 'FAIL',
-        expected: 'sync_attempts 5 (from 4), sync_status failed',
-        actual: JSON.stringify(failed),
-      });
-      rec.record({
-        name: 'REGRESSION GUARD: a failed push does NOT flip the platform Order status',
-        outcome: orderDuringFailure.status === 'SCHEDULED' ? 'PASS' : 'FAIL',
-        expected:
-          'SCHEDULED — the merchant was never told, so the platform must not claim CONFIRMED',
-        actual: orderDuringFailure.status,
-        suspect:
-          orderDuringFailure.status === 'SCHEDULED'
-            ? undefined
-            : 'syncOneCall() wrote Order.status before the push and never rolled it back',
-        severity: 'critical',
-      });
-      rec.record({
-        name: 'the receiver fails closed when the merchant has no signing secret configured',
-        outcome: failTick.result?.failed === 1 ? 'PASS' : 'FAIL',
-        expected: 'the push is rejected by the shop, not accepted unsigned',
-        actual: JSON.stringify(failTick.result),
-        severity: 'critical',
-      });
+    failTick = tick;
+    failed = row;
+    orderDuringFailure = await orderRow(sql, platformOrder.id);
+    racedByDeployedCron = raced;
+    if (!raced) {
+      failCallId = synth.callId; // this is the call the assertions below evaluate
     }
-
-    await composeExec(COMPOSE, SVC, [
-      'wp',
-      '--allow-root',
-      'option',
-      'update',
-      'vocify_signature_secret',
-      fixture.signatureSecret,
-    ]);
-    // Terminal, so no scheduled tick on the deployed build keeps hammering the
-    // shop for a call this suite is finished with.
-    await sql.query(
-      `UPDATE calls SET sync_status='failed', sync_attempts=5 WHERE id=$1`,
-      [failCallId]
-    );
-  } else {
-    rec.skip('failure accounting when the shop is unreachable', 'could not synthesise a second call');
+    // else: raced and terminal (synced) already — leave it, try again with a
+    // fresh held call if a try remains.
   }
+
+  if (synthesiseErr) {
+    rec.blocked('failure accounting: second completed call', synthesiseErr.message);
+  } else if (!failTick) {
+    rec.blocked('failure accounting: second completed call', 'synthesiseCompletedCall returned nothing');
+  } else if (racedByDeployedCron) {
+    const reason =
+      `a scheduled cron tick on the DEPLOYED build claimed this call first on all ${MAX_TRIES} tries ` +
+      `(last tick saw nothing to do; call is now ${JSON.stringify(failed)}, order ${orderDuringFailure.status}). ` +
+      'The deployed platform runs the same tick on a Cloudflare Cron Trigger every UTC minute against the same database.';
+    rec.blocked('a shop that rejects the push is counted as a failed sync', reason);
+    rec.blocked('a failed push increments sync_attempts and takes the call terminal', reason);
+    rec.blocked('REGRESSION GUARD: a failed push does NOT flip the platform Order status', reason);
+  } else {
+    rec.record({
+      name: 'a shop that rejects the push is counted as a failed sync, not a silent success',
+      outcome: failTick.result?.failed === 1 && failTick.result?.synced === 0 ? 'PASS' : 'FAIL',
+      expected: '{synced: 0, failed: 1}',
+      actual: JSON.stringify(failTick.result),
+    });
+    rec.record({
+      name: 'a failed push increments sync_attempts and takes the call terminal at the cap',
+      outcome: failed.sync_attempts === 5 && failed.sync_status === 'failed' ? 'PASS' : 'FAIL',
+      expected: 'sync_attempts 5 (from 4), sync_status failed',
+      actual: JSON.stringify(failed),
+    });
+    rec.record({
+      name: 'REGRESSION GUARD: a failed push does NOT flip the platform Order status',
+      outcome: orderDuringFailure.status === 'SCHEDULED' ? 'PASS' : 'FAIL',
+      expected:
+        'SCHEDULED — the merchant was never told, so the platform must not claim CONFIRMED',
+      actual: orderDuringFailure.status,
+      suspect:
+        orderDuringFailure.status === 'SCHEDULED'
+          ? undefined
+          : 'syncOneCall() wrote Order.status before the push and never rolled it back',
+      severity: 'critical',
+    });
+  }
+
+  // Terminalise every held call this block created (including any abandoned
+  // after a race), so no scheduled tick on the deployed build keeps hammering
+  // the shop for a call this suite is finished with.
+  for (const id of raceAttemptCallIds) {
+    await sql.query(`UPDATE calls SET sync_status='failed', sync_attempts=5 WHERE id=$1`, [id]);
+  }
+
+  // ── 9b. the receiver itself fails closed with no secret configured ───────
+  //
+  // This is a direct HTTP call to the shop's own receiver — it never touches
+  // syncCompletedOrders() or the platform at all, so it carries none of the
+  // cron race above. It was previously folded into the block above and
+  // asserted only `failTick.result.failed === 1`, which is the SAME
+  // observation as assertion #1 above under different prose (it would also
+  // pass if the push failed for an unrelated reason — TLS, network, an
+  // adapter throw). This checks the receiver's own claim: given ANY
+  // signature, with `vocify_signature_secret` still cleared from above, it
+  // must answer 503 `vocify_not_configured`, not fall through to signature
+  // verification.
+  const noSecretPush = await postToReceiver(storeUrl, fixture.signatureSecret, freshPayload('confirmed'));
+  rec.record({
+    name: 'the receiver fails closed when no signing secret is configured',
+    outcome:
+      noSecretPush.status === 503 && noSecretPush.body?.code === 'vocify_not_configured' ? 'PASS' : 'FAIL',
+    expected: 'HTTP 503 vocify_not_configured',
+    actual: `HTTP ${noSecretPush.status} ${noSecretPush.body?.code ?? ''}`,
+    severity: 'critical',
+  });
+
+  await composeExec(COMPOSE, SVC, [
+    'wp',
+    '--allow-root',
+    'option',
+    'update',
+    'vocify_signature_secret',
+    fixture.signatureSecret,
+  ]);
 
   rec.record({
     name: 'SAFETY: still nothing dialable at the end of the suite',

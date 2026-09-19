@@ -225,11 +225,34 @@ Access: **Modules** → **Module Manager** → **Vocify AI** → **Configure**
 | Setting | Value | Required |
 |---------|-------|----------|
 | **API Key** | Paste your API key | ✅ Yes |
+| **Webhook Signing Secret** | Paste the signing secret shown with your API key | ✅ Yes |
 | **Enable Integration** | Toggle ON | ✅ Yes |
 | **Debug Mode** | OFF (enable only for troubleshooting) | No |
 | **Webhook URL** | Leave default | ✅ Yes |
+| **Order status after a CONFIRMED / CANCELLED / COMPLETED call** | Leave the defaults unless you use custom statuses | ✅ Yes |
 
-### 3. Test Connection
+⚠️ **The Webhook Signing Secret is required as of 1.2.0.** It now authenticates traffic in *both*
+directions: outgoing orders, and the call results Vocify AI posts back. With it empty, your order
+statuses will never update.
+
+### 3. Let Vocify AI reach your shop
+
+Call results are delivered to:
+
+```
+POST https://<your-shop>/index.php?fc=module&module=vocifyai&controller=webhook
+```
+
+The exact URL for your shop is shown as **Call Result URL** on the configuration page. Two things
+have to be true for it to work:
+
+1. The store URL registered in your Vocify AI dashboard must be your shop's **canonical domain** —
+   the one under **Preferences → SEO & URLs → Shop URL**. PrestaShop answers `302 Moved` to any
+   request whose host does not match it, and Vocify AI treats a redirect as a delivery failure.
+2. That URL must be reachable over **HTTPS** from the public internet. No allow-listing is needed;
+   the request is authenticated by its signature, not by its source address.
+
+### 4. Test Connection
 
 1. Click the **Test Connection** button
 2. If successful, you'll see: "Connection successful! Your API key is valid."
