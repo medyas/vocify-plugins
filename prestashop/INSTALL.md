@@ -414,7 +414,7 @@ Then reinstall via PrestaShop admin panel.
 ### Documentation
 - [Main README](README.md)
 - [CMS Plugins Specification](../../docs/CMS_PLUGINS_SPECIFICATION.md)
-- [Best Practices](../../claude.md)
+- [Best Practices](../../CLAUDE.md)
 
 ### Getting Help
 - **Email**: developers@vocify-ai.com

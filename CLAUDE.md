@@ -6,14 +6,14 @@ WooCommerce plugin + PrestaShop module. They send orders to the Vocify platform 
 
 ## ⚠️ Progress Protocol (READ FIRST)
 
-**`main` is the trunk (owner decision 2026-08-16).** Work goes on `main` directly, or on a short-lived feature branch merged into `main`, and is pushed to origin. The workspace-wide `vocify-v2` gate is retired, and that branch never existed in this repo. `progress.md` is the single source of truth for what is done and what is next.
+**`main` is the trunk (owner decision 2026-08-16).** Work goes on `main` directly, or on a short-lived feature branch merged into `main`, and is pushed to origin. The workspace-wide `vocify-v2` gate is retired, and that branch never existed in this repo. `PROGRESS.md` is the single source of truth for what is done and what is next.
 
 **MANDATORY every session:**
-1. **Before starting**, read `progress.md`, find the current task, mark it `🔄 in progress`.
-2. **Before claiming ANY task done**, update `progress.md` in the same turn: tick the box, set status, add a one-line note (date + what changed + commit ref).
-3. Never report work complete without the matching `progress.md` edit.
+1. **Before starting**, read `PROGRESS.md`, find the current task, mark it `🔄 in progress`.
+2. **Before claiming ANY task done**, update `PROGRESS.md` in the same turn: tick the box, set status, add a one-line note (date + what changed + commit ref).
+3. Never report work complete without the matching `PROGRESS.md` edit.
 
-> **Filename note:** git tracks this file as `claude.md` and the progress file as `progress.md`, in lowercase. The sibling repos use `CLAUDE.md`/`PROGRESS.md`. Windows resolves both spellings to the same file. On Linux/GitHub only the lowercase names exist, so write links in lowercase. Code comments cite `PROGRESS.md §N`, and those section numbers are kept stable. Do not renumber §5–§12.
+> **Filename note:** renamed from lowercase `claude.md`/`progress.md` on 2026-09-25 to match the sibling repos (Claude Code auto-loads `CLAUDE.md` only). Code comments cite `PROGRESS.md §N`; those section numbers are kept stable — do not renumber §5–§12.
 
 Git: always pin the repo (`git -C C:/projects/vocify/plugins …`), because agent shells reset cwd. Stage explicit paths and never use `git add -A`, because the untracked `plugins.zip` (~10 MB) sits in the root.
 
@@ -49,9 +49,9 @@ plugins/
 ├── docs/
 │   ├── CMS_PLUGINS_SPECIFICATION.md  # ⚠️ 2025 spec — its HMAC/header examples are SUPERSEDED (body-only HMAC)
 │   ├── engineering_philosophy.md
-│   └── history/                      # verbatim archives of claude.md / progress.md + review reports
+│   └── history/                      # verbatim archives of CLAUDE.md / PROGRESS.md + review reports
 ├── VALIDATION_REPORT.md              # ⚠️ historical (2025), prescribes the old body-only HMAC
-└── progress.md
+└── PROGRESS.md
 ```
 
 Shopify and Magento are **planned only**. No code exists for them.

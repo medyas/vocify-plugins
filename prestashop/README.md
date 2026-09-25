@@ -456,7 +456,7 @@ the order page and what makes a repeated push a no-op — hence the UNIQUE index
 ### Documentation
 
 - [Main CMS Plugins Specification](../../docs/CMS_PLUGINS_SPECIFICATION.md)
-- [Best Practices Guide](../../claude.md)
+- [Best Practices Guide](../../CLAUDE.md)
 - [Development Progress](../../progress.md)
 
 ### Getting Help
@@ -529,7 +529,7 @@ SOFTWARE.
 
 ## Contributing
 
-We welcome contributions! Please see [claude.md](../../claude.md) for development guidelines and best practices.
+We welcome contributions! Please see [claude.md](../../CLAUDE.md) for development guidelines and best practices.
 
 ---
 
