@@ -372,7 +372,7 @@ class VocifyWebhookService
     {
         $orderPayments = $order->getOrderPaymentCollection();
 
-        if ($orderPayments && count($orderPayments) > 0) {
+        if ($orderPayments) {
             foreach ($orderPayments as $payment) {
                 if (!empty($payment->transaction_id)) {
                     return (string)$payment->transaction_id;
@@ -393,7 +393,7 @@ class VocifyWebhookService
     {
         $orderPayments = $order->getOrderPaymentCollection();
 
-        if ($orderPayments && count($orderPayments) > 0) {
+        if ($orderPayments) {
             foreach ($orderPayments as $payment) {
                 if (!empty($payment->date_add)) {
                     $timestamp = strtotime($payment->date_add);
@@ -775,7 +775,7 @@ class VocifyWebhookService
 
             default:
                 // Check if order has any payments
-                if ($orderPayments && count($orderPayments) > 0) {
+                if ($orderPayments) {
                     return 'paid';
                 }
                 return 'pending';

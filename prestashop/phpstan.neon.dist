@@ -1,0 +1,16 @@
+parameters:
+    level: 5
+    phpVersion: 70100
+    paths:
+        - vocifyai.php
+        - classes
+        - controllers
+        - upgrade
+    excludePaths:
+        - tests/*
+        - vendor/*
+    bootstrapFiles:
+        - .phpstan/constants.php
+    scanFiles:
+        - .phpstan/core-stubs.php
+    reportUnmatchedIgnoredErrors: true
