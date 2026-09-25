@@ -1,0 +1,17 @@
+parameters:
+    level: 5
+    phpVersion:
+        min: 70400
+        max: 80300
+    paths:
+        - vocify-ai-woocommerce.php
+        - includes
+    bootstrapFiles:
+        - vendor/php-stubs/woocommerce-stubs/woocommerce-stubs.php
+    excludePaths:
+        - tests/*
+        - vendor/*
+    reportUnmatchedIgnoredErrors: true
+includes:
+    - phpstan-baseline.neon
+

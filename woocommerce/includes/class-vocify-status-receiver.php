@@ -51,6 +51,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+/**
+ * REST callback for the return leg (platform -> shop). See the file
+ * docblock above for the full contract.
+ */
 class Vocify_AI_Status_Receiver {
 
     /** REST namespace and route. */
@@ -209,7 +213,9 @@ class Vocify_AI_Status_Receiver {
         $map = $this->status_map();
         $new_status = isset($map[$outcome]) ? $map[$outcome] : null;
 
-        $order->add_order_note($this->build_note($outcome, $call_data), false);
+        // WC_Order::add_order_note()'s second parameter is $is_customer_note,
+        // typed int (0/1) by WooCommerce itself, not bool.
+        $order->add_order_note($this->build_note($outcome, $call_data), 0);
 
         if ($new_status !== null && $new_status !== $previous_status) {
             // `set_status` + `save` rather than `update_status`, so the note
@@ -221,7 +227,11 @@ class Vocify_AI_Status_Receiver {
             $order->update_meta_data(self::META_LAST_CALL, $call_sid);
         }
         if ($completed_at !== false) {
-            $order->update_meta_data(self::META_LAST_COMPLETED_AT, $completed_at);
+            // Cast to string: WC_Data::update_meta_data() stores meta as text
+            // regardless, and it is read back with an (int) cast above, so
+            // this is a no-op for behaviour and satisfies the stub's
+            // array|string $value type.
+            $order->update_meta_data(self::META_LAST_COMPLETED_AT, (string)$completed_at);
         }
         $order->update_meta_data(self::META_LAST_OUTCOME, $outcome);
         $order->save();

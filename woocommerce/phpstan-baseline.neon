@@ -1,0 +1,19 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Constant VOCIFY_AI_PLUGIN_URL not found\.$#'
+			identifier: constant.notFound
+			count: 2
+			path: includes/class-vocify-admin.php
+
+		-
+			message: '#^Call to function is_array\(\) with array will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: includes/class-vocify-payload-validator.php
+
+		-
+			message: '#^Cannot call method get_variation_attributes\(\) on WC_Product\|true\.$#'
+			identifier: method.nonObject
+			count: 1
+			path: includes/class-vocify-webhook-service.php

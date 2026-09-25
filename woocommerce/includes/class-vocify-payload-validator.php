@@ -27,6 +27,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+/**
+ * Validates a unified webhook payload against the platform's schema rules.
+ * Pure and WP-free — see the file docblock above.
+ */
 class Vocify_AI_Payload_Validator {
 
     const FINANCIAL_STATUSES = array(
@@ -62,17 +66,17 @@ class Vocify_AI_Payload_Validator {
         $this->require_string($errors, $payload, 'orderNumber', 'orderNumber');
         $this->require_string($errors, $payload, 'status', 'status');
 
-        if (isset($payload['orderKey']) && $payload['orderKey'] !== null && !is_string($payload['orderKey'])) {
+        if (isset($payload['orderKey']) && !is_string($payload['orderKey'])) {
             $errors[] = 'orderKey must be a string';
         }
 
         // ---- Statuses (enums) -------------------------------------------
-        if (isset($payload['financialStatus']) && $payload['financialStatus'] !== null
+        if (isset($payload['financialStatus'])
             && !in_array($payload['financialStatus'], self::FINANCIAL_STATUSES, true)) {
             $errors[] = 'financialStatus must be one of: ' . implode(', ', self::FINANCIAL_STATUSES);
         }
 
-        if (isset($payload['fulfillmentStatus']) && $payload['fulfillmentStatus'] !== null
+        if (isset($payload['fulfillmentStatus'])
             && !in_array($payload['fulfillmentStatus'], self::FULFILLMENT_STATUSES, true)) {
             $errors[] = 'fulfillmentStatus must be one of: ' . implode(', ', self::FULFILLMENT_STATUSES);
         }
@@ -162,7 +166,7 @@ class Vocify_AI_Payload_Validator {
         }
 
         foreach (array('updatedAt', 'paidAt') as $key) {
-            if (isset($payload[$key]) && $payload[$key] !== null && !$this->is_valid_date($payload[$key])) {
+            if (isset($payload[$key]) && !$this->is_valid_date($payload[$key])) {
                 $errors[] = $key . ' must be a valid ISO 8601 date';
             }
         }

@@ -56,23 +56,27 @@ class Vocify_AI_WooCommerce {
     private static $instance = null;
 
     /**
-     * Admin instance
+     * Admin instance. Null until on_plugins_loaded() runs, and stays null
+     * when WooCommerce is not active.
      *
-     * @var Vocify_AI_Admin
+     * @var Vocify_AI_Admin|null
      */
     public $admin;
 
     /**
-     * Order handler instance
+     * Order handler instance. Null until on_plugins_loaded() runs, and stays
+     * null when WooCommerce is not active — see retry_failed_webhooks(),
+     * which is why this must be nullable rather than asserted non-null.
      *
-     * @var Vocify_AI_Order_Handler
+     * @var Vocify_AI_Order_Handler|null
      */
     public $order_handler;
 
     /**
-     * Inbound status receiver (platform -> shop)
+     * Inbound status receiver (platform -> shop). Null until init_hooks()
+     * runs, and stays null when WooCommerce is not active.
      *
-     * @var Vocify_AI_Status_Receiver
+     * @var Vocify_AI_Status_Receiver|null
      */
     public $status_receiver;
 
@@ -263,7 +267,7 @@ class Vocify_AI_WooCommerce {
             KEY retry_count (retry_count)
         ) $charset_collate;";
 
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         dbDelta($sql);
         dbDelta($sql_failed);
     }
