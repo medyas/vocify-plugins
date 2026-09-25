@@ -102,7 +102,9 @@ Generating optimized autoload files
 ```bash
 # Create ZIP for upload to PrestaShop
 cd ..
-zip -r vocifyai.zip vocifyai/ -x "*.git*" "*.gitignore"
+zip -r vocifyai.zip vocifyai/ \
+  -x "*.git*" "*.gitignore" \
+  -x "*phpstan*" "*.phpstan/*" "*phpcs.xml*" "*.phpunit.result.cache"
 ```
 
 **Important**: Include the `vendor/` directory in the ZIP file.
@@ -139,7 +141,9 @@ Download the latest release from GitHub:
 
 ```bash
 # Create ZIP without vendor directory
-zip -r vocifyai.zip vocifyai/ -x "*.git*" "*.gitignore" "*vendor/*" "*composer.*"
+zip -r vocifyai.zip vocifyai/ \
+  -x "*.git*" "*.gitignore" "*vendor/*" "*composer.*" \
+  -x "*phpstan*" "*.phpstan/*" "*phpcs.xml*" "*.phpunit.result.cache"
 ```
 
 Or manually:
