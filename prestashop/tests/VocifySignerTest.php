@@ -51,7 +51,7 @@ class VocifySignerTest extends TestCase
     {
         $signature = $this->signer->sign('2026-01-01T00:00:00+00:00', '{"orderId":"1"}', 'secret123');
 
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $signature);
+        $this->assertRegExp('/^[0-9a-f]{64}$/', $signature);
         $this->assertSame($signature, $this->signer->sign('2026-01-01T00:00:00+00:00', '{"orderId":"1"}', 'secret123'));
     }
 

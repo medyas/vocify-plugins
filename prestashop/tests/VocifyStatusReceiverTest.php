@@ -548,13 +548,13 @@ class VocifyStatusReceiverTest extends TestCase
     public function testTheMappingIsExpressedAsConfigurationKeysNotStatusNames()
     {
         foreach (VocifyStatusReceiver::stateConfigKeys() as $outcome => $configKey) {
-            $this->assertMatchesRegularExpression('/^VOCIFY_STATE_[A-Z]+$/', $configKey, $outcome);
+            $this->assertRegExp('/^VOCIFY_STATE_[A-Z]+$/', $configKey, $outcome);
         }
 
         // And the fallbacks are PrestaShop's own state pointers, which are
         // also ids rather than names.
         foreach (VocifyStatusReceiver::defaultStateKeys() as $outcome => $psKey) {
-            $this->assertMatchesRegularExpression('/^PS_OS_[A-Z]+$/', $psKey, $outcome);
+            $this->assertRegExp('/^PS_OS_[A-Z]+$/', $psKey, $outcome);
         }
 
         $this->assertSame(

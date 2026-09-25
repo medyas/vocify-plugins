@@ -38,7 +38,7 @@ class VocifyPayloadBuilderTest extends TestCase
 
         // First non-empty candidate is '(220) 221-1003' with default country TN.
         // Either E.164 (libphonenumber) or stripped digits must be phone-like.
-        $this->assertMatchesRegularExpression('/^\+?\d+$/', $payload['customer']['phone']);
+        $this->assertRegExp('/^\+?\d+$/', $payload['customer']['phone']);
         $this->assertStringNotContainsString('(', $payload['customer']['phone']);
     }
 
