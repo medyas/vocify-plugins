@@ -32,7 +32,8 @@ plugins/
 │   │   ├── class-vocify-webhook-service.php  # send, 3× backoff, failed queue, is_allowed_webhook_url()
 │   │   └── class-vocify-status-receiver.php  # INBOUND: REST vocify/v1/order-status
 │   ├── assets/{css,js}/admin.*
-│   └── tests/                        # PHPUnit, no WP bootstrap: 31 tests (builder, validator, signer)
+│   ├── phpstan.neon.dist / phpstan-baseline.neon / phpcs.xml.dist   # see "Quality gates" below
+│   └── tests/                        # PHPUnit, no WP bootstrap: 43 tests (31 builder/validator/signer + 12 Brain Monkey: webhook HMAC/payload send path, status-receiver auth path)
 ├── prestashop/                       # PrestaShop module "vocifyai", v1.2.0 (PHP 7.1+, PS 1.7.0 → 8.x)
 │   ├── vocifyai.php                  # module class: hooks, config form, install/uninstall, double-emit + re-entrancy guards
 │   ├── classes/
@@ -44,6 +45,7 @@ plugins/
 │   │   └── webhook.php               # INBOUND: thin adapter over VocifyStatusReceiver
 │   ├── upgrade/upgrade-1.2.0.php     # creates vocify_call_results, seeds state mapping, registers displayAdminOrderSide
 │   ├── views/templates/admin/{order_info,webhook_logs}.tpl
+│   ├── .phpstan/{constants,core-stubs}.php / phpstan.neon.dist / phpcs.xml.dist   # see "Quality gates" below
 │   └── tests/                        # PHPUnit, no PS bootstrap: 68 tests incl. 33 in VocifyStatusReceiverTest
 ├── test/e2e/                         # Dockerised plugin ↔ DEPLOYED platform harness (see below)
 ├── docs/
@@ -62,12 +64,21 @@ This machine has no local PHP. Run everything through Docker (php 8.2-cli / `com
 
 ```bash
 # per plugin (cd woocommerce | cd prestashop) — inside a composer:2 / php:8.2-cli container
-composer install            # dev deps (phpunit) — for testing only
-composer test               # vendor/bin/phpunit
-composer lint               # php -l over the plugin's PHP files
+composer install            # dev deps (phpunit, phpstan, phpcs) — for testing only
+composer test                # vendor/bin/phpunit
+composer lint                # php -l over every plugin .php file (find | xargs, so a syntax error actually fails the gate)
+composer analyse              # vendor/bin/phpstan analyse
+composer cs                   # vendor/bin/phpcs
 ```
 
-**Release zips:** build them from a `composer install --no-dev --optimize-autoloader` tree. A dev `vendor/` must never ship. It pulls nikic/php-parser v5, which shadows the v4 that PrestaShop needs, and then `prestashop:module install` dies for *every* module on the shop (progress.md §8). The zip root folder must be the plugin slug: `vocify-ai-woocommerce/` for WordPress, `vocifyai/` for PrestaShop. See `woocommerce/INSTALL.md` "Create Distribution Package". The repo has no build script. ⚠️ The untracked root `plugins.zip` is **not** a release artifact: it contains dev `vendor/` (phpunit, php-parser) and `.phpunit.result.cache`, and its roots are `woocommerce/`/`prestashop/`.
+**Release zips:** build them from a `composer install --no-dev --optimize-autoloader` tree. A dev `vendor/` must never ship. It pulls nikic/php-parser v5, which shadows the v4 that PrestaShop needs, and then `prestashop:module install` dies for *every* module on the shop (progress.md §8). The zip root folder must be the plugin slug: `vocify-ai-woocommerce/` for WordPress, `vocifyai/` for PrestaShop. See `woocommerce/INSTALL.md` "Create Distribution Package". The repo has no build script. ⚠️ The untracked root `plugins.zip` is **not** a release artifact: it contains dev `vendor/` (phpunit, php-parser) and `.phpunit.result.cache`, and its roots are `woocommerce/`/`prestashop/`. `phpstan`/`phpcs`/`mockery`/`brain/monkey` are `require-dev` only (verified 2026-09-25 by a `--no-dev` install: neither's classmap contains them) — a release zip's dist "Create Distribution Package" excludes the config files (`phpstan.neon.dist`, `phpstan-baseline.neon`, `.phpstan/`, `phpcs.xml.dist`) too, though shipping them would be harmless.
+
+## Quality gates
+
+PHPStan (level 5) + PHPCS run in CI (`.github/workflows/ci.yml`, php floor + 8.3 per plugin; validated with `actionlint`, not executed here — no runner). Both plugins are currently **green** (0 errors) on `composer test`, `composer lint`, `composer analyse`, `composer cs`.
+
+- **WooCommerce** `phpcs.xml.dist`: `WordPress-Extra` (deliberately not the full `WordPress`/Docs superset — see the ruleset's own comment) + `PHPCompatibilityWP` (7.4-). The four security sniffs (`EscapeOutput`, `NonceVerification`, `ValidatedSanitizedInput`, `DB.PreparedSQL`) are listed explicitly and never ruleset-excluded; a false positive is a per-line `// phpcs:ignore Sniff -- reason` at the finding. Non-security whitespace/naming sniffs that clash with this codebase's 4-space house style (tabs, padded parens, array alignment, Yoda conditions, `class-vocify-*.php` filenames) are ruleset-excluded, each with a reason. `phpstan.neon.dist` uses `php-stubs/woocommerce-stubs` + `szepeviktor/phpstan-wordpress`; `phpstan-baseline.neon` holds 4 documented false positives (never add to it — only shrink it).
+- **PrestaShop** `phpcs.xml.dist`: `PHPCompatibility` (7.1-) only — there is no PrestaShop-specific WPCS equivalent. `phpstan.neon.dist` scans hand-written stubs in `.phpstan/` for the ~20 core classes the module touches (`prestashop/php-dev-tools` is a coding-standards/PHP-CS-Fixer package, not a PHPStan-stubs one — see the stub file's docblock). No baseline needed (0 findings).
 
 ## Outbound contract: shop → platform
 
