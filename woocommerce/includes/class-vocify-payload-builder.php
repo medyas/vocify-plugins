@@ -24,6 +24,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+/**
+ * Transforms a WC_Order-derived raw data map into the platform's unified
+ * webhook payload. Pure and WP-free — see the file docblock above.
+ */
 class Vocify_AI_Payload_Builder {
 
     /**
@@ -87,12 +91,12 @@ class Vocify_AI_Payload_Builder {
      */
     public function build($raw) {
         $customer = isset($raw['customer']) && is_array($raw['customer']) ? $raw['customer'] : array();
-        $firstName = isset($customer['first_name']) ? (string)$customer['first_name'] : '';
-        $lastName = isset($customer['last_name']) ? (string)$customer['last_name'] : '';
+        $first_name = isset($customer['first_name']) ? (string)$customer['first_name'] : '';
+        $last_name = isset($customer['last_name']) ? (string)$customer['last_name'] : '';
         $email = isset($customer['email']) ? (string)$customer['email'] : '';
         $items = isset($raw['items']) && is_array($raw['items']) ? $raw['items'] : array();
 
-        if ($firstName === '' || $lastName === '' || $email === '' || count($items) === 0) {
+        if ($first_name === '' || $last_name === '' || $email === '' || count($items) === 0) {
             return null;
         }
 
@@ -102,7 +106,7 @@ class Vocify_AI_Payload_Builder {
         $totals = isset($raw['totals']) && is_array($raw['totals']) ? $raw['totals'] : array();
 
         // Required date fields: createdAt must always be present.
-        $createdAt = isset($raw['created_at']) ? (int)$raw['created_at'] : time();
+        $created_at = isset($raw['created_at']) ? (int)$raw['created_at'] : time();
 
         $payload = array(
             'orderId' => isset($raw['order_id']) ? (string)$raw['order_id'] : '',
@@ -110,8 +114,8 @@ class Vocify_AI_Payload_Builder {
             'status' => isset($raw['status']) ? (string)$raw['status'] : '',
             'customer' => array(
                 'id' => isset($customer['id']) ? (string)$customer['id'] : '',
-                'firstName' => $firstName,
-                'lastName' => $lastName,
+                'firstName' => $first_name,
+                'lastName' => $last_name,
                 'email' => $email,
                 'phone' => $phone,
             ),
@@ -122,7 +126,7 @@ class Vocify_AI_Payload_Builder {
             ),
             'currency' => isset($raw['currency']) ? strtoupper((string)$raw['currency']) : '',
             'shippingAddress' => $shipping,
-            'createdAt' => gmdate(self::PLATFORM_DATE_FORMAT, $createdAt),
+            'createdAt' => gmdate(self::PLATFORM_DATE_FORMAT, $created_at),
         );
 
         // Optional identifiers / statuses (only set when non-empty).
@@ -260,11 +264,11 @@ class Vocify_AI_Payload_Builder {
             isset($customer['mobile_phone']) ? $customer['mobile_phone'] : '',
         );
 
-        $defaultCountry = isset($raw['default_country']) ? (string)$raw['default_country'] : 'US';
+        $default_country = isset($raw['default_country']) ? (string)$raw['default_country'] : 'US';
 
         foreach ($phones as $phone) {
             if (is_string($phone) && $phone !== '') {
-                return $this->format_phone($phone, $defaultCountry);
+                return $this->format_phone($phone, $default_country);
             }
         }
 
@@ -295,7 +299,7 @@ class Vocify_AI_Payload_Builder {
      * @return array
      */
     private function build_address($address, $raw, $fallback = array()) {
-        $defaultCountry = isset($raw['default_country']) ? (string)$raw['default_country'] : 'US';
+        $default_country = isset($raw['default_country']) ? (string)$raw['default_country'] : 'US';
 
         $keys = array('first_name', 'last_name', 'company', 'address1', 'address2', 'city', 'state', 'zip', 'country', 'phone');
 
@@ -318,7 +322,7 @@ class Vocify_AI_Payload_Builder {
         }
 
         if ($merged['country'] === '') {
-            $merged['country'] = strtoupper($defaultCountry);
+            $merged['country'] = strtoupper($default_country);
         } else {
             $merged['country'] = strtoupper($merged['country']);
         }
@@ -419,7 +423,7 @@ class Vocify_AI_Payload_Builder {
                 if ($phone_util->isValidNumber($phone_number)) {
                     return $phone_util->format($phone_number, \libphonenumber\PhoneNumberFormat::E164);
                 }
-            } catch (\libphonenumber\NumberParseException $e) {
+            } catch (\libphonenumber\NumberParseException $e) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch -- intentional: fall through to the basic-formatting fallback below.
                 // Fall through to basic formatting
             }
         }

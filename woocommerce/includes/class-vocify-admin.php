@@ -48,7 +48,7 @@ class Vocify_AI_Admin {
         add_menu_page(
             __('Vocify AI Settings', 'vocify-ai'),
             __('Vocify AI', 'vocify-ai'),
-            'manage_woocommerce',
+            'manage_woocommerce', // phpcs:ignore WordPress.WP.Capabilities.Unknown -- a real WooCommerce capability, registered by WooCommerce itself; WPCS only recognizes WP-core capabilities.
             'vocify-ai',
             array($this, 'render_settings_page'),
             'dashicons-phone',
@@ -176,7 +176,7 @@ class Vocify_AI_Admin {
      */
     public function render_settings_page() {
         // Check user capabilities
-        if (!current_user_can('manage_woocommerce')) {
+        if (!current_user_can('manage_woocommerce')) { // phpcs:ignore WordPress.WP.Capabilities.Unknown -- a real WooCommerce capability, registered by WooCommerce itself; WPCS only recognizes WP-core capabilities.
             wp_die(esc_html__('You do not have sufficient permissions to access this page.', 'vocify-ai'));
         }
 
@@ -186,7 +186,7 @@ class Vocify_AI_Admin {
         $debug_mode        = get_option('vocify_debug_mode', 'no');
         $webhook_url       = get_option('vocify_webhook_url', 'https://app.vocify-ai.com/api/webhooks/ecommerce');
         $signature_secret  = get_option('vocify_signature_secret', '');
-        $store_domain      = parse_url(get_site_url(), PHP_URL_HOST);
+        $store_domain      = wp_parse_url(get_site_url(), PHP_URL_HOST);
 
         $status_class = 'vocify-status-not-configured';
         $status_label = __('Not configured', 'vocify-ai');
@@ -426,6 +426,7 @@ class Vocify_AI_Admin {
         $table_name = $wpdb->prefix . 'vocify_webhook_logs';
 
         // Get recent webhooks
+        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table_name is $wpdb->prefix . 'vocify_webhook_logs' above, never user input; there are no dynamic VALUES in this query to place a %s/%d for, and %i (identifier placeholder) is WP 6.2+, above this plugin's 5.8 floor. $wpdb->posts is WooCommerce/WP's own property, not interpolated user data either.
         $logs = $wpdb->get_results(
             "SELECT l.*, p.post_title as order_number
              FROM {$table_name} l
@@ -433,6 +434,7 @@ class Vocify_AI_Admin {
              ORDER BY l.created_at DESC
              LIMIT 20"
         );
+        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
         if (empty($logs)) {
             echo '<p><em>' . esc_html__('No webhook activity yet.', 'vocify-ai') . '</em></p>';
@@ -467,7 +469,7 @@ class Vocify_AI_Admin {
                                 <?php echo esc_html($status_label); ?>
                             </span>
                         </td>
-                        <td><?php echo esc_html($log->http_code ?: 'N/A'); ?></td>
+                        <td><?php echo esc_html($log->http_code ? $log->http_code : 'N/A'); ?></td>
                         <td><?php echo esc_html(date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($log->created_at))); ?></td>
                         <td>
                             <?php if (!empty($log->error_message)) : ?>
@@ -498,7 +500,7 @@ class Vocify_AI_Admin {
         check_ajax_referer('vocify_test_connection', 'nonce');
 
         // Check user capabilities
-        if (!current_user_can('manage_woocommerce')) {
+        if (!current_user_can('manage_woocommerce')) { // phpcs:ignore WordPress.WP.Capabilities.Unknown -- a real WooCommerce capability, registered by WooCommerce itself; WPCS only recognizes WP-core capabilities.
             wp_send_json_error(array(
                 'message' => __('You do not have permission to perform this action.', 'vocify-ai'),
             ));

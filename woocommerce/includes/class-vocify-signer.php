@@ -23,6 +23,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+/**
+ * Builds the HMAC-SHA256 signature and request headers for the Vocify AI
+ * unified webhook contract. Pure and WP-free — see the file docblock above.
+ */
 class Vocify_AI_Signer {
 
     const PLATFORM = 'WOOCOMMERCE';
@@ -116,6 +120,7 @@ class Vocify_AI_Signer {
             return '';
         }
 
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url -- deliberately the native function, not wp_parse_url(): this class loads and is unit-tested with no WordPress bootstrap (tests/bootstrap.php), so a WP-only function here would fatal-error under PHPUnit.
         $host = parse_url($url, PHP_URL_HOST);
 
         if (!is_string($host) || $host === '') {

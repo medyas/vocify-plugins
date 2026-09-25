@@ -12,6 +12,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+/**
+ * Signs, sends and retries the outbound order webhook, and transforms a
+ * WC_Order into the unified payload. See the file docblock above.
+ */
 class Vocify_AI_Webhook_Service {
 
     const PLATFORM = 'WOOCOMMERCE';
@@ -250,10 +254,21 @@ class Vocify_AI_Webhook_Service {
         $items = array();
 
         foreach ($order->get_items() as $item) {
+            // get_items() with no filter argument returns only 'line_item'
+            // entries, which are always WC_Order_Item_Product — but the
+            // WooCommerce stubs type the return as the generic WC_Order_Item
+            // base class (which has no get_product()), since the real
+            // signature can't know statically which item types were asked
+            // for. Narrow it back for the analyser; no runtime effect.
+            /** @var \WC_Order_Item_Product $item */
             $product = $item->get_product();
             $product_id = $product ? $product->get_id() : 0;
             $image_id = $product ? $product->get_image_id() : 0;
-            $image_url = $image_id ? wp_get_attachment_url($image_id) : '';
+            // get_image_id() is a numeric string in real WooCommerce (post
+            // meta is always text); wp_get_attachment_url() wants an int.
+            // Both accept the coercion at runtime — this cast just matches
+            // it statically.
+            $image_url = $image_id ? wp_get_attachment_url((int)$image_id) : '';
 
             if (!is_string($image_url)) {
                 $image_url = '';
@@ -384,7 +399,7 @@ class Vocify_AI_Webhook_Service {
                 $result = $this->send_webhook($payload, $api_key, $webhook_url);
 
                 if ($result['success']) {
-                    $this->log($order_id, 'success', $result['http_code'], json_encode($result['response']));
+                    $this->log($order_id, 'success', $result['http_code'], wp_json_encode($result['response']));
 
                     if ($debug_mode) {
                         wc_get_logger()->info(
@@ -479,6 +494,7 @@ class Vocify_AI_Webhook_Service {
         $store_domain = $this->signer->extract_domain(get_site_url());
         $signature_secret = get_option('vocify_signature_secret', '');
 
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- deliberately the native encoder, not wp_json_encode(): these are the exact transmitted bytes the HMAC signature below is computed over, and PrestaShop's json_encode() must produce the identical string for the same payload (parity, not a WP-specific string). Swapping encoders is a signing-contract change and needs a known-answer test plus e2e, not a lint fix — see plugins/CLAUDE.md "Outbound contract".
         $raw_body = json_encode($payload);
         $headers = $this->signer->build_headers($api_key, $store_domain, $raw_body, $signature_secret);
 
@@ -543,6 +559,7 @@ class Vocify_AI_Webhook_Service {
         }
 
         $rows = $wpdb->get_results($wpdb->prepare(
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is $wpdb->prefix . 'vocify_failed_webhooks' above, never user input; %d placeholders below cover the query's dynamic values via $wpdb->prepare().
             "SELECT id, order_id, payload FROM {$table}
              WHERE retry_count < %d
              ORDER BY created_at ASC
@@ -565,9 +582,9 @@ class Vocify_AI_Webhook_Service {
             $result = $this->send_webhook($payload, $api_key, $webhook_url);
 
             if ($result['success']) {
-                $this->log((int)$row->order_id, 'success', $result['http_code'], json_encode($result['response']));
+                $this->log((int)$row->order_id, 'success', $result['http_code'], wp_json_encode($result['response']));
                 $wpdb->delete($table, array('id' => $row->id), array('%d'));
-                $sent++;
+                ++$sent;
                 continue;
             }
 
@@ -582,6 +599,7 @@ class Vocify_AI_Webhook_Service {
 
             // Transient failure — keep queued for the next tick.
             $wpdb->query($wpdb->prepare(
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is $wpdb->prefix . 'vocify_failed_webhooks' above, never user input; %s/%d placeholders below cover the query's dynamic values via $wpdb->prepare().
                 "UPDATE {$table}
                  SET error_message = %s, retry_count = retry_count + 1, last_retry_at = %s
                  WHERE id = %d",
@@ -650,7 +668,7 @@ class Vocify_AI_Webhook_Service {
                 $wpdb->prefix . 'vocify_failed_webhooks',
                 array(
                     'order_id' => $order_id,
-                    'payload' => json_encode($payload),
+                    'payload' => wp_json_encode($payload),
                     'error_message' => $error_message,
                     'retry_count' => 0,
                     'created_at' => current_time('mysql'),

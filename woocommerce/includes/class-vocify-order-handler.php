@@ -121,7 +121,7 @@ class Vocify_AI_Order_Handler {
             'failed',      // Payment failed
         );
 
-        if (in_array($new_status, $trigger_statuses)) {
+        if (in_array($new_status, $trigger_statuses, true)) {
             $this->send_order_webhook($order, 'status_change');
         }
     }
@@ -152,7 +152,7 @@ class Vocify_AI_Order_Handler {
                 $order->add_order_note(
                     sprintf(
                         /* translators: 1: Event type 2: HTTP code */
-                        __('Vocify AI webhook sent successfully (Event: %s, HTTP Code: %d)', 'vocify-ai'),
+                        __('Vocify AI webhook sent successfully (Event: %1$s, HTTP Code: %2$d)', 'vocify-ai'),
                         $event_type,
                         $result['http_code']
                     )
@@ -168,7 +168,7 @@ class Vocify_AI_Order_Handler {
                 $order->add_order_note(
                     sprintf(
                         /* translators: 1: Event type 2: Error */
-                        __('Vocify AI webhook failed (Event: %s, Error: %s)', 'vocify-ai'),
+                        __('Vocify AI webhook failed (Event: %1$s, Error: %2$s)', 'vocify-ai'),
                         $event_type,
                         $result['error']
                     )
@@ -187,7 +187,7 @@ class Vocify_AI_Order_Handler {
             $order->add_order_note(
                 sprintf(
                     /* translators: 1: Event type 2: Error */
-                    __('Vocify AI webhook exception (Event: %s, Error: %s)', 'vocify-ai'),
+                    __('Vocify AI webhook exception (Event: %1$s, Error: %2$s)', 'vocify-ai'),
                     $event_type,
                     $error_message
                 )
@@ -262,6 +262,7 @@ class Vocify_AI_Order_Handler {
 
         $logs = $wpdb->get_results(
             $wpdb->prepare(
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table_name is $wpdb->prefix . 'vocify_webhook_logs' above, never user input; %d below is the query's only dynamic value and is already placeholdered through $wpdb->prepare().
                 "SELECT * FROM {$table_name} WHERE order_id = %d ORDER BY created_at DESC LIMIT 10",
                 $order_id
             )
@@ -292,7 +293,7 @@ class Vocify_AI_Order_Handler {
                                         <?php echo esc_html($status_label); ?>
                                     </span>
                                 </td>
-                                <td><?php echo esc_html($log->http_code ?: 'N/A'); ?></td>
+                                <td><?php echo esc_html($log->http_code ? $log->http_code : 'N/A'); ?></td>
                                 <td><?php echo esc_html(date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($log->created_at))); ?></td>
                             </tr>
                             <?php if (!empty($log->error_message)) : ?>

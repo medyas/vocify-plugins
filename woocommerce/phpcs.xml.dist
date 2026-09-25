@@ -1,0 +1,102 @@
+<?xml version="1.0"?>
+<ruleset name="Vocify AI WooCommerce Plugin">
+    <description>WordPress-Extra + PHPCompatibilityWP for the Vocify AI WooCommerce plugin.</description>
+
+    <file>.</file>
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+    <exclude-pattern>*/tests/*</exclude-pattern>
+    <exclude-pattern>*/assets/*</exclude-pattern>
+
+    <arg value="sp"/>
+    <arg name="extensions" value="php"/>
+
+    <config name="minimum_supported_wp_version" value="5.8"/>
+
+    <!-- WordPress-Extra only, per the plan (docs/superpowers/plans/2026-09-25-code-quality-harness.md):
+         a WordPress-Docs-heavy "WordPress" superset was tried first and
+         added ~70 pure docblock-completeness findings (MissingParamComment,
+         ParamCommentFullStop) with no security value — narrower scope on
+         purpose.
+
+         Non-security STYLE sniffs below are excluded with reasons (2026-09-25
+         triage, PROGRESS.md §13), per the plan's "exclude with documented
+         reasons rather than mass-rewriting the code". This codebase is
+         written in a 4-space PSR-2-ish house style shared with the sibling
+         PrestaShop module (see plugins/CLAUDE.md). WPCS's default house
+         style is tabs, padded parentheses/casts, and aligned array
+         double-arrows — applying it (phpcbf touches ~4,600 of ~4,700
+         findings here) would rewrite nearly every line of every file for a
+         pure whitespace change, destroy `git blame` on every line touched,
+         and diverge visually from the PrestaShop module for zero
+         behavioural benefit. Every sniff excluded below is
+         whitespace/formatting/naming-convention only — none of them
+         overlaps the four security sniffs listed further down, which stay
+         fully enforced and are never excluded here (only ever suppressed
+         per-line, at the specific false-positive finding, with a reason). -->
+    <rule ref="WordPress-Extra">
+        <properties>
+            <property name="text_domain" type="array">
+                <element value="vocify-ai"/>
+            </property>
+        </properties>
+
+        <exclude name="Generic.WhiteSpace.DisallowSpaceIndent"/>
+        <exclude name="PEAR.Functions.FunctionCallSignature"/>
+        <exclude name="WordPress.WhiteSpace.ControlStructureSpacing"/>
+        <exclude name="WordPress.Arrays.MultipleStatementAlignment"/>
+        <exclude name="Generic.Formatting.SpaceAfterCast"/>
+        <exclude name="WordPress.WhiteSpace.OperatorSpacing"/>
+        <exclude name="Generic.Formatting.MultipleStatementAlignment"/>
+        <exclude name="NormalizedArrays.Arrays.ArrayBraceSpacing"/>
+        <exclude name="Squiz.Functions.FunctionDeclarationArgumentSpacing"/>
+        <exclude name="WordPress.Arrays.ArrayKeySpacingRestrictions"/>
+        <exclude name="WordPress.Arrays.ArrayDeclarationSpacing"/>
+        <exclude name="WordPress.WhiteSpace.CastStructureSpacing"/>
+        <exclude name="Generic.WhiteSpace.ArbitraryParenthesesSpacing"/>
+        <exclude name="Universal.WhiteSpace.PrecisionAlignment"/>
+
+        <!-- `if ('literal' === $var)` vs this codebase's
+             `if ($var === 'literal')` — a readability preference, no
+             functional difference. -->
+        <exclude name="WordPress.PHP.YodaConditions"/>
+
+        <!-- Would require renaming every includes/class-vocify-*.php file
+             (e.g. class-vocify-signer.php -> class-vocify-ai-signer.php to
+             match WPCS's full-class-name convention). These files are never
+             autoloaded by filename — every one is an explicit require_once
+             in vocify-ai-woocommerce.php — and plugins/CLAUDE.md's Layout
+             section documents the current names verbatim. -->
+        <exclude name="WordPress.Files.FileName.InvalidClassFileName"/>
+
+        <!-- vocify-ai-woocommerce.php: one class (the plugin bootstrap) plus
+             one loose init function that instantiates it — a standard,
+             common WordPress plugin bootstrap shape, not a file that grew a
+             stray function. -->
+        <exclude name="Universal.Files.SeparateFunctionsFromOO.Mixed"/>
+    </rule>
+
+    <rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+        <properties>
+            <property name="prefixes" type="array">
+                <element value="Vocify_AI"/>
+                <element value="VOCIFY_AI"/>
+                <element value="vocify_ai"/>
+                <element value="vocify"/>
+            </property>
+        </properties>
+    </rule>
+
+    <!-- Security sniffs this ruleset exists to enforce — listed explicitly
+         so a future WPCS major that reshuffles WordPress-Extra can't drop
+         them silently. Every finding under these four was individually
+         triaged 2026-09-25: real ones fixed (see PROGRESS.md §13), false
+         positives recorded as a per-line "phpcs:ignore Sniff, with a reason"
+         comment at the finding, never excluded here. -->
+    <rule ref="WordPress.Security.EscapeOutput"/>
+    <rule ref="WordPress.Security.NonceVerification"/>
+    <rule ref="WordPress.Security.ValidatedSanitizedInput"/>
+    <rule ref="WordPress.DB.PreparedSQL"/>
+
+    <config name="testVersion" value="7.4-"/>
+    <rule ref="PHPCompatibilityWP"/>
+</ruleset>
