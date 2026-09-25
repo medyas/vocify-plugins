@@ -98,7 +98,7 @@ function arg(name, fallback) {
 }
 
 if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/')}`) {
-  const url = arg('url', 'https://162-19-32-251.sslip.io/api/webhooks/ecommerce');
+  const url = arg('url', 'https://152-228-210-12.sslip.io/api/webhooks/ecommerce');
   const log = (s) => process.stderr.write(`${s}\n`);
   const sql = await connect();
   let fixture = null;

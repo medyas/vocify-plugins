@@ -42,7 +42,7 @@ const TUNNEL_CONTAINER = 'vocify-e2e-psrt-tunnel';
 
 // The DEPLOYED platform — a real public hostname with real Let's Encrypt TLS on
 // the OVH box. Same default as orchestrate.mjs.
-const BASE_URL = process.env.TEST_BASE_URL || 'https://162-19-32-251.sslip.io';
+const BASE_URL = process.env.TEST_BASE_URL || 'https://152-228-210-12.sslip.io';
 const WEBHOOK_URL = `${BASE_URL}/api/webhooks/ecommerce`;
 
 // Leg-1 credentials. Dev-only literals on purpose: this stack is throwaway, has

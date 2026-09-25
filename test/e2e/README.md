@@ -73,7 +73,7 @@ Output: console log plus `REPORT.md` (gitignored). Exit code 0 = all green,
 
 | Requirement | Why |
 |---|---|
-| A reachable deployed platform | Default `https://162-19-32-251.sslip.io`. Override with `TEST_BASE_URL`. |
+| A reachable deployed platform | Default `https://152-228-210-12.sslip.io`. Override with `TEST_BASE_URL`. |
 | `platform/.env` with `DATABASE_URL` | Fixtures and readback against the same database the platform uses. Nothing under `platform/` is ever written. |
 | Docker | WordPress/WooCommerce and PrestaShop stacks. |
 | Outbound internet from the containers | The shops POST to the real public endpoint — see below. |

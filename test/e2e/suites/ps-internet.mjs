@@ -10,7 +10,7 @@
 //
 //   an order placed in a REAL shop
 //     → the module's outbound hook, signed by the shipped PHP
-//     → the DEPLOYED platform at https://162-19-32-251.sslip.io  (orders row)
+//     → the DEPLOYED platform at https://152-228-210-12.sslip.io  (orders row)
 //     → a synthesised completed Call                              (no dialling)
 //     → POST /api/internal/sync-ecommerce on the DEPLOYED platform
 //     → the PrestaShop outbound adapter, HMAC + HTTPS

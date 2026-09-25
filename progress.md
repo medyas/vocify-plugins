@@ -33,6 +33,12 @@ This document tracks the development progress of all Vocify AI e-commerce CMS pl
 
 ---
 
+## 9. E2E target moved to the new VPS (2026-09-25) ✅
+- The test platform moved `162.19.32.251` → `152.228.210.12`. `test/e2e` defaults (`orchestrate.mjs`, `run-ps-return.mjs`,
+  `fixtures/contract-probe.mjs`, `suites/ps-internet.mjs`, `README.md`) now target `https://152-228-210-12.sslip.io`.
+  `REPORT*.md` keep the old URL on purpose — they record runs made against the old box. The old URL 308-redirects
+  during the 7-day rollback window, but the store plugins' own configured platform URL must be updated by hand.
+
 ## 6. Security fixes (pentest 2026-09-18) ✅ code + verification — ⏳ commit pending
 
 **Source:** owner-authorized penetration test, `pentest-2026-09-18/reports/plugins-sec.md`. Findings 1 (High, mitigation only), 2 and 3 (Medium) are fixed here; finding 4 (WC reflected XSS) is folded into the XSS fix. Findings 5 (timestamp not signed — needs a platform-side change) and all Low/Info items are **not** addressed in this pass and remain with the lead. Full per-file diff summary and verification log: `pentest-2026-09-18/reports/fix-plugins.md`.
