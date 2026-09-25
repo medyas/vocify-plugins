@@ -26,7 +26,15 @@
         "giggsey/libphonenumber-for-php": "^8.13"
     },
     "require-dev": {
-        "phpunit/phpunit": "^9.6"
+        "brain/monkey": "^2.7",
+        "php-stubs/woocommerce-stubs": "^11.1",
+        "phpcompatibility/phpcompatibility-wp": "*",
+        "phpstan/extension-installer": "^1.4",
+        "phpstan/phpstan": "^2.2",
+        "phpunit/phpunit": "^9.6",
+        "squizlabs/php_codesniffer": "*",
+        "szepeviktor/phpstan-wordpress": "^2.0",
+        "wp-coding-standards/wpcs": "*"
     },
     "autoload": {
         "classmap": [
@@ -40,11 +48,20 @@
     },
     "config": {
         "optimize-autoloader": true,
-        "sort-packages": true
+        "sort-packages": true,
+        "platform": {
+            "php": "7.4.33"
+        },
+        "allow-plugins": {
+            "phpstan/extension-installer": true,
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
     },
     "scripts": {
         "test": "@php vendor/bin/phpunit",
-        "lint": "@php -l vocify-ai-woocommerce.php && find includes -name '*.php' -exec php -l {} \\;"
+        "lint": "@php -l vocify-ai-woocommerce.php && find includes -name '*.php' -print0 | xargs -0 -n1 -- php -l",
+        "analyse": "@php vendor/bin/phpstan analyse --memory-limit=1G",
+        "cs": "vendor/bin/phpcs"
     },
     "support": {
         "email": "developers@vocify-ai.com",

@@ -115,7 +115,9 @@ Generating optimized autoload files
 ```bash
 # Create ZIP for upload to WordPress
 cd ..
-zip -r vocify-ai-woocommerce.zip vocify-ai-woocommerce/ -x "*.git*" "*.gitignore"
+zip -r vocify-ai-woocommerce.zip vocify-ai-woocommerce/ \
+  -x "*.git*" "*.gitignore" \
+  -x "*phpstan*" "*phpcs.xml*" "*.phpunit.result.cache"
 ```
 
 **Important**: Include the `vendor/` directory in the ZIP file.
@@ -155,7 +157,9 @@ Download the latest release from GitHub:
 
 ```bash
 # Create ZIP without vendor directory
-zip -r vocify-ai-woocommerce.zip vocify-ai-woocommerce/ -x "*.git*" "*.gitignore" "*vendor/*" "*composer.*"
+zip -r vocify-ai-woocommerce.zip vocify-ai-woocommerce/ \
+  -x "*.git*" "*.gitignore" "*vendor/*" "*composer.*" \
+  -x "*phpstan*" "*phpcs.xml*" "*.phpunit.result.cache"
 ```
 
 Or manually:
