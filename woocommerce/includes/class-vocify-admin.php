@@ -392,7 +392,7 @@ class Vocify_AI_Admin {
                                 </a>
                             </li>
                             <li>
-                                <a href="mailto:developers@vocify.tn">
+                                <a href="mailto:support@vocify.tn">
                                     <?php esc_html_e('Email Support', 'vocify-ai'); ?>
                                 </a>
                             </li>

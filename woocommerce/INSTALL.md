@@ -452,7 +452,7 @@ Then deactivate and reactivate the plugin via WordPress admin panel.
 
 ### Getting Help
 
-- **Email**: developers@vocify.tn
+- **Email**: support@vocify.tn
 - **Documentation**: https://vocify.tn
 - **GitHub Issues**: https://github.com/vocify-ai/woocommerce-plugin/issues
 

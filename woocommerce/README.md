@@ -429,7 +429,7 @@ Queue for failed webhooks requiring retry.
 
 ### Getting Help
 
-- **Email**: developers@vocify.tn
+- **Email**: support@vocify.tn
 - **Documentation**: https://vocify.tn
 - **GitHub Issues**: https://github.com/vocify-ai/woocommerce-plugin/issues
 

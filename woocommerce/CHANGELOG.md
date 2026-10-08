@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- The default webhook URL is now `https://vocify.tn/api/webhooks/ecommerce`, a domain Vocify owns. The old default `https://app.vocify-ai.com/...` pointed at an **unregistered** domain (pentest 2026-09-18, O1): whoever registered it would have received every store's API key and order PII. Existing installs keep their saved URL; only new installs (and the field's help text) change. Plugin, docs and support links now point to `https://vocify.tn` / `developers@vocify.tn`.
+- The default webhook URL is now `https://vocify.tn/api/webhooks/ecommerce`, a domain Vocify owns. The old default `https://app.vocify-ai.com/...` pointed at an **unregistered** domain (pentest 2026-09-18, O1): whoever registered it would have received every store's API key and order PII. Existing installs keep their saved URL; only new installs (and the field's help text) change. Plugin, docs and support links now point to `https://vocify.tn` / `support@vocify.tn`.
 
 ### Added
 
@@ -216,7 +216,7 @@ This project uses [Semantic Versioning](https://semver.org/):
 - [GitHub Repository](https://github.com/vocify-ai/woocommerce-plugin)
 - [Vocify AI Platform](https://vocify.tn)
 - [Documentation](https://vocify.tn)
-- [Support](mailto:developers@vocify.tn)
+- [Support](mailto:support@vocify.tn)
 
 ---
 

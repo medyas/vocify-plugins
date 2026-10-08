@@ -1838,7 +1838,7 @@ function validatePhone(phoneString, defaultCountry = 'US') {
 
 - **Documentation**: https://vocify.tn
 - **API Reference**: https://vocify.tn
-- **Developer Support**: developers@vocify.tn
+- **Developer Support**: support@vocify.tn
 - **GitHub**: https://github.com/vocify-ai
 - **Slack Community**: https://vocify-ai.slack.com
 
@@ -1854,4 +1854,4 @@ function validatePhone(phoneString, defaultCountry = 'US') {
 
 **END OF SPECIFICATION**
 
-*This document is maintained by the Vocify AI Platform Team. For updates or clarifications, please contact developers@vocify.tn.*
+*This document is maintained by the Vocify AI Platform Team. For updates or clarifications, please contact support@vocify.tn.*

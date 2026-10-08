@@ -461,7 +461,7 @@ the order page and what makes a repeated push a no-op — hence the UNIQUE index
 
 ### Getting Help
 
-- **Email**: developers@vocify.tn
+- **Email**: support@vocify.tn
 - **Documentation**: https://vocify.tn
 - **GitHub Issues**: https://github.com/vocify-ai/prestashop-module/issues
 - **Slack Community**: https://vocify-ai.slack.com

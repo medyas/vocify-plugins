@@ -421,7 +421,7 @@ Then reinstall via PrestaShop admin panel.
 - [Best Practices](../../CLAUDE.md)
 
 ### Getting Help
-- **Email**: developers@vocify.tn
+- **Email**: support@vocify.tn
 - **Documentation**: https://vocify.tn
 - **GitHub Issues**: https://github.com/vocify-ai/prestashop-module/issues
 

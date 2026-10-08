@@ -122,6 +122,7 @@ Unified headers (`X-Platform`/`X-API-Key`/`X-Domain`/`X-Timestamp`/`X-Signature`
 
 ## Changelog (short)
 
+- **2026-10-08** — `developers@vocify.tn` → `support@vocify.tn` everywhere (only `support@`/`hello@` exist); same unreleased WC 1.2.0 / PS 1.2.1.
 - **2026-10-08** — domain refs → `vocify.tn` (webhook default, dashboard/docs/support links, composer metadata, spec); WC 1.2.0, PS 1.2.1; closes O1 + O4. PHPUnit not run locally (no PHP) — CI is the gate. Default endpoint probed: `POST https://vocify.tn/api/webhooks/ecommerce` unsigned → 400 (route live).
 - **2026-09-25** — `5e21755`..`2a091a7` code-quality harness (§13): PHPStan level 5 both plugins (WC baselined 4, PS 0 findings, no baseline), WPCS/PHPCompatibility (WC 4906→0 findings, PS 0 findings), Brain Monkey tests for the WC HMAC send path + receiver auth path (31→43 tests), GitHub Actions CI, composer-platform-pin bugfixes (real PHP floors: WC needed the pin or a prod dep silently required 8.1; PS's real lowest-installable floor is 7.2, not 7.1).
 - **2026-09-25** — `9996268` e2e default target → new VPS. Docs rewrite (this file + `claude.md`), archive in `docs/history/`, root `.gitignore` for `plugins.zip`.
