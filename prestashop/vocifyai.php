@@ -74,7 +74,7 @@ class VocifyAI extends Module
     {
         $this->name = 'vocifyai';
         $this->tab = 'administration';
-        $this->version = '1.2.0';
+        $this->version = '1.2.1';
         $this->author = 'Vocify AI';
         $this->need_instance = 0;
         $this->ps_versions_compliancy = array('min' => '1.7.0', 'max' => _PS_VERSION_);
@@ -241,7 +241,7 @@ class VocifyAI extends Module
             Configuration::updateValue('VOCIFY_SIGNATURE_SECRET', '') &&
             Configuration::updateValue('VOCIFY_ENABLED', false) &&
             Configuration::updateValue('VOCIFY_DEBUG_MODE', false) &&
-            Configuration::updateValue('VOCIFY_WEBHOOK_URL', 'https://app.vocify-ai.com/api/webhooks/ecommerce') &&
+            Configuration::updateValue('VOCIFY_WEBHOOK_URL', 'https://vocify.tn/api/webhooks/ecommerce') &&
             Configuration::updateValue('VOCIFY_CRON_TOKEN', $cronToken);
 
         return $ok && $this->installStateMapping();
@@ -535,7 +535,7 @@ class VocifyAI extends Module
         // what stops file:///... local file read and internal SSRF from the BO.
         $webhookUrl = trim((string)$webhookUrl);
         if (!Validate::isAbsoluteUrl($webhookUrl) || !VocifyWebhookService::isAllowedWebhookUrl($webhookUrl)) {
-            return $this->displayError($this->l('Invalid webhook URL. It must be an absolute https:// URL to a public host, e.g. https://app.vocify-ai.com/api/webhooks/ecommerce'));
+            return $this->displayError($this->l('Invalid webhook URL. It must be an absolute https:// URL to a public host, e.g. https://vocify.tn/api/webhooks/ecommerce'));
         }
 
         // Outcome → order state. Submitted as numeric id_order_state values

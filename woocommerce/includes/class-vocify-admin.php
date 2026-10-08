@@ -85,7 +85,7 @@ class Vocify_AI_Admin {
         register_setting('vocify_ai_settings', 'vocify_webhook_url', array(
             'type'              => 'string',
             'sanitize_callback' => array($this, 'sanitize_webhook_url'),
-            'default'           => 'https://app.vocify-ai.com/api/webhooks/ecommerce',
+            'default'           => 'https://vocify.tn/api/webhooks/ecommerce',
         ));
 
         // Webhook Signing Secret (signatureSecret from the Vocify AI dashboard)
@@ -126,10 +126,10 @@ class Vocify_AI_Admin {
         add_settings_error(
             'vocify_ai_settings',
             'vocify_webhook_url_invalid',
-            __('Webhook URL was not saved: it must be an absolute https:// URL, e.g. https://app.vocify-ai.com/api/webhooks/ecommerce', 'vocify-ai')
+            __('Webhook URL was not saved: it must be an absolute https:// URL, e.g. https://vocify.tn/api/webhooks/ecommerce', 'vocify-ai')
         );
 
-        return get_option('vocify_webhook_url', 'https://app.vocify-ai.com/api/webhooks/ecommerce');
+        return get_option('vocify_webhook_url', 'https://vocify.tn/api/webhooks/ecommerce');
     }
 
     /**
@@ -184,7 +184,7 @@ class Vocify_AI_Admin {
         $api_key           = get_option('vocify_api_key', '');
         $enabled           = get_option('vocify_enabled', 'no');
         $debug_mode        = get_option('vocify_debug_mode', 'no');
-        $webhook_url       = get_option('vocify_webhook_url', 'https://app.vocify-ai.com/api/webhooks/ecommerce');
+        $webhook_url       = get_option('vocify_webhook_url', 'https://vocify.tn/api/webhooks/ecommerce');
         $signature_secret  = get_option('vocify_signature_secret', '');
         $store_domain      = wp_parse_url(get_site_url(), PHP_URL_HOST);
 
@@ -242,7 +242,7 @@ class Vocify_AI_Admin {
                                         printf(
                                             /* translators: %s: Link to Vocify AI dashboard */
                                             esc_html__('Enter your Vocify AI API key from your %s.', 'vocify-ai'),
-                                            '<a href="https://app.vocify-ai.com" target="_blank">' . esc_html__('dashboard', 'vocify-ai') . '</a>'
+                                            '<a href="https://vocify.tn" target="_blank">' . esc_html__('dashboard', 'vocify-ai') . '</a>'
                                         );
                                         ?>
                                     </p>
@@ -387,12 +387,12 @@ class Vocify_AI_Admin {
                         <h3><?php esc_html_e('Need Help?', 'vocify-ai'); ?></h3>
                         <ul>
                             <li>
-                                <a href="https://docs.vocify-ai.com/cms-plugins" target="_blank">
+                                <a href="https://vocify.tn" target="_blank">
                                     <?php esc_html_e('Documentation', 'vocify-ai'); ?>
                                 </a>
                             </li>
                             <li>
-                                <a href="mailto:developers@vocify-ai.com">
+                                <a href="mailto:developers@vocify.tn">
                                     <?php esc_html_e('Email Support', 'vocify-ai'); ?>
                                 </a>
                             </li>
@@ -524,7 +524,7 @@ class Vocify_AI_Admin {
         $signature_secret = get_option('vocify_signature_secret', '');
 
         // Get webhook URL
-        $webhook_url = get_option('vocify_webhook_url', 'https://app.vocify-ai.com/api/webhooks/ecommerce');
+        $webhook_url = get_option('vocify_webhook_url', 'https://vocify.tn/api/webhooks/ecommerce');
 
         if (!Vocify_AI_Webhook_Service::is_allowed_webhook_url($webhook_url)) {
             wp_send_json_error(array(

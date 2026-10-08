@@ -234,7 +234,7 @@ For users without shell access but want the Composer dependencies.
 
 ### 1. Get Your API Key
 
-1. Log in to [Vocify AI Dashboard](https://app.vocify-ai.com)
+1. Log in to [Vocify AI Dashboard](https://vocify.tn)
 2. Navigate to **Agents** → Select your agent
 3. Go to **Integrations** → **Create Integration** → **WooCommerce**
 4. Copy the API key (format: `vcf_live_XXXXXXXXXXXXXXXXXXXX`)
@@ -327,7 +327,7 @@ You should see:
 1. Verify API key format
 2. Check server firewall settings:
    ```bash
-   curl -I https://app.vocify-ai.com/api/webhooks/ecommerce
+   curl -I https://vocify.tn/api/webhooks/ecommerce
    ```
 3. Verify cURL is installed:
    ```bash
@@ -452,8 +452,8 @@ Then deactivate and reactivate the plugin via WordPress admin panel.
 
 ### Getting Help
 
-- **Email**: developers@vocify-ai.com
-- **Documentation**: https://docs.vocify-ai.com/cms-plugins
+- **Email**: developers@vocify.tn
+- **Documentation**: https://vocify.tn
 - **GitHub Issues**: https://github.com/vocify-ai/woocommerce-plugin/issues
 
 ### Reporting Issues
@@ -493,4 +493,4 @@ The suite needs no WordPress installation — it loads the core classes directly
 
 **Happy Installing! 🚀**
 
-For more information, visit [https://vocify-ai.com](https://vocify-ai.com)
+For more information, visit [https://vocify.tn](https://vocify.tn)

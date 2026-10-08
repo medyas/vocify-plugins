@@ -33,10 +33,10 @@
 
 | # | Item | Sev | Owner |
 |---|---|---|---|
-| O1 | **`vocify-ai.com` is UNREGISTERED** (RDAP 404), yet `https://app.vocify-ai.com/api/webhooks/ecommerce` is the shipped default in both plugins. Whoever registers it would receive every store's API key and customer PII. Register it, or change the default to an owned host, **before any zip ships**. | 🔴 | owner |
+| O1 | ✅ **2026-10-08** — default webhook URL is now the owned `https://vocify.tn/api/webhooks/ecommerce` (was the unregistered `app.vocify-ai.com`); WC 1.2.0 / PS 1.2.1. Saved settings on existing installs are not migrated. | — | — |
 | O2 | Re-run the e2e harness (`./run.sh` + `./run-ps-return.sh`) against the new VPS `https://152-228-210-12.sslip.io`. Nothing has run against it yet. | 🟠 | plugins |
 | O3 | Store-side configured platform URL: every real shop pointed at the old host must be repointed by hand. **PrestaShop fails immediately** because its cURL sets `FOLLOWLOCATION=false` (§6) and so never follows the old host's 308. **WooCommerce** `wp_remote_post` uses WP's default redirect-following, so it keeps working only for the 7-day 308 rollback window (from 2026-09-25). | 🟠 | owner |
-| O4 | WooCommerce version bump → **1.2.0** plus a CHANGELOG entry. The receiver, the HMAC fix and the §8 fixes shipped under an unchanged `1.1.0`, and `CHANGELOG.md` has no entry for them. Merchants must fill in the signing secret, which now authenticates both directions. | 🟡 | lead |
+| O4 | ✅ **2026-10-08** — WooCommerce bumped to **1.2.0** with a CHANGELOG entry covering the receiver, timestamp-bound HMAC, `customerPhone`, duplicate-emission fix and the domain fix. | — | — |
 | O5 | ✅ narrowed 2026-09-25 (§13): the receiver's **auth path** (all 6 rejection branches + the authenticated-lookup branch) now has 9 Brain Monkey tests, and the webhook-sending order handler's HMAC/payload path has 3. Still e2e-only: the receiver's order-*mutation* branches (idempotency, ordering, status mapping) — porting PrestaShop's CMS-free-decision-class pattern would let those be unit-tested too. | 🟡 | plugins |
 | O6 | Fold `suites/ps-return.mjs` + `suites/ps-internet.mjs` into `orchestrate.mjs` as a 4th `--only` target. | 🟡 | plugins |
 | O7 | Contract decisions left open (§8): PrestaShop sends the **localised** state name as `status` where WC sends a slug; no zero-total guard on `woocommerce_new_order`; behaviour when no local signing secret is set (currently sends unsigned, which the platform rejects). | 🟡 | lead |
@@ -122,6 +122,7 @@ Unified headers (`X-Platform`/`X-API-Key`/`X-Domain`/`X-Timestamp`/`X-Signature`
 
 ## Changelog (short)
 
+- **2026-10-08** — domain refs → `vocify.tn` (webhook default, dashboard/docs/support links, composer metadata, spec); WC 1.2.0, PS 1.2.1; closes O1 + O4. PHPUnit not run locally (no PHP) — CI is the gate. Default endpoint probed: `POST https://vocify.tn/api/webhooks/ecommerce` unsigned → 400 (route live).
 - **2026-09-25** — `5e21755`..`2a091a7` code-quality harness (§13): PHPStan level 5 both plugins (WC baselined 4, PS 0 findings, no baseline), WPCS/PHPCompatibility (WC 4906→0 findings, PS 0 findings), Brain Monkey tests for the WC HMAC send path + receiver auth path (31→43 tests), GitHub Actions CI, composer-platform-pin bugfixes (real PHP floors: WC needed the pin or a prod dep silently required 8.1; PS's real lowest-installable floor is 7.2, not 7.1).
 - **2026-09-25** — `9996268` e2e default target → new VPS. Docs rewrite (this file + `claude.md`), archive in `docs/history/`, root `.gitignore` for `plugins.zip`.
 - **2026-09-19** — `d484b38` PS internet-leg proof · `6b7c738` PS receiver, module 1.2.0 · `f7d4f42` e2e harness · `ea012ea` HMAC timestamp binding + pentest fixes + §8 bugs + WC receiver.

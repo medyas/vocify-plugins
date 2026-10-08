@@ -216,7 +216,7 @@ For users without shell access but want the Composer dependencies.
 
 ### 1. Get Your API Key
 
-1. Log in to [Vocify AI Dashboard](https://app.vocify-ai.com)
+1. Log in to [Vocify AI Dashboard](https://vocify.tn)
 2. Navigate to **Agents** → Select your agent
 3. Go to **Integrations** → **Create Integration** → **PrestaShop**
 4. Copy the API key (format: `vcf_live_XXXXXXXXXXXXXXXXXXXX`)
@@ -320,7 +320,7 @@ You should see:
 1. Verify API key format
 2. Check server firewall settings:
    ```bash
-   curl -I https://app.vocify-ai.com/api/webhooks/ecommerce
+   curl -I https://vocify.tn/api/webhooks/ecommerce
    ```
 3. Verify cURL is installed:
    ```bash
@@ -421,8 +421,8 @@ Then reinstall via PrestaShop admin panel.
 - [Best Practices](../../CLAUDE.md)
 
 ### Getting Help
-- **Email**: developers@vocify-ai.com
-- **Documentation**: https://docs.vocify-ai.com/cms-plugins
+- **Email**: developers@vocify.tn
+- **Documentation**: https://vocify.tn
 - **GitHub Issues**: https://github.com/vocify-ai/prestashop-module/issues
 
 ### Reporting Issues
@@ -460,4 +460,4 @@ The suite needs no PrestaShop installation — it loads the core classes directl
 
 **Happy Installing! 🚀**
 
-For more information, visit [https://vocify-ai.com](https://vocify-ai.com)
+For more information, visit [https://vocify.tn](https://vocify.tn)

@@ -1,11 +1,11 @@
 <?php
 /**
  * Plugin Name: Vocify AI - Order Confirmation Calls
- * Plugin URI: https://vocify-ai.com
+ * Plugin URI: https://vocify.tn
  * Description: Automate order confirmation calls with AI voice technology. Enhance customer experience and reduce order cancellations.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Vocify AI
- * Author URI: https://vocify-ai.com
+ * Author URI: https://vocify.tn
  * License: MIT
  * License URI: https://opensource.org/licenses/MIT
  * Text Domain: vocify-ai
@@ -16,7 +16,7 @@
  * WC tested up to: 8.5
  *
  * @package VocifyAI
- * @version 1.1.0
+ * @version 1.2.0
  */
 
 if (!defined('ABSPATH')) {
@@ -24,7 +24,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('VOCIFY_AI_VERSION', '1.1.0');
+define('VOCIFY_AI_VERSION', '1.2.0');
 define('VOCIFY_AI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('VOCIFY_AI_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('VOCIFY_AI_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -281,7 +281,7 @@ class Vocify_AI_WooCommerce {
             'vocify_signature_secret' => '',
             'vocify_enabled' => 'no',
             'vocify_debug_mode' => 'no',
-            'vocify_webhook_url' => 'https://app.vocify-ai.com/api/webhooks/ecommerce',
+            'vocify_webhook_url' => 'https://vocify.tn/api/webhooks/ecommerce',
         );
 
         foreach ($defaults as $key => $value) {

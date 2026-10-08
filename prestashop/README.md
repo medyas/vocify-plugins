@@ -119,7 +119,7 @@ This method works without Composer but uses basic phone number formatting.
 
 ### Getting Your API Key
 
-1. Log in to your [Vocify AI Dashboard](https://app.vocify-ai.com)
+1. Log in to your [Vocify AI Dashboard](https://vocify.tn)
 2. Navigate to **Agents** → Select your agent
 3. Go to **Integrations** → **Create Integration** → **Select PrestaShop**
 4. Copy the generated API key (format: `vcf_live_XXXXXXXXXXXXXXXXXXXX`)
@@ -136,7 +136,7 @@ Access configuration: **Modules** → **Module Manager** → **Vocify AI** → *
 | **Webhook Signing Secret** | Signs each webhook request (`X-Signature`); shown once when you create your API key | Recommended | - |
 | **Enable Integration** | Turn the integration on/off | ✅ Yes | Disabled |
 | **Debug Mode** | Enable verbose logging for troubleshooting | No | Disabled |
-| **Webhook URL** | Vocify AI webhook endpoint | ✅ Yes | `https://app.vocify-ai.com/api/webhooks/ecommerce` |
+| **Webhook URL** | Vocify AI webhook endpoint | ✅ Yes | `https://vocify.tn/api/webhooks/ecommerce` |
 | **Order status after a CONFIRMED call** | Which of your order statuses is applied when the customer confirms | ✅ Yes | Processing in progress (`PS_OS_PREPARATION`) |
 | **Order status after a CANCELLED call** | Applied when the customer cancels on the phone | ✅ Yes | Cancelled (`PS_OS_CANCELED`) |
 | **Order status after a COMPLETED call** | Applied when the call ends without an explicit yes or no | ✅ Yes | Delivered (`PS_OS_DELIVERED`) |
@@ -461,8 +461,8 @@ the order page and what makes a repeated push a no-op — hence the UNIQUE index
 
 ### Getting Help
 
-- **Email**: developers@vocify-ai.com
-- **Documentation**: https://docs.vocify-ai.com/cms-plugins
+- **Email**: developers@vocify.tn
+- **Documentation**: https://vocify.tn
 - **GitHub Issues**: https://github.com/vocify-ai/prestashop-module/issues
 - **Slack Community**: https://vocify-ai.slack.com
 
@@ -535,4 +535,4 @@ We welcome contributions! Please see [claude.md](../../CLAUDE.md) for developmen
 
 **Made with ❤️ by Vocify AI**
 
-For more information, visit [https://vocify-ai.com](https://vocify-ai.com)
+For more information, visit [https://vocify.tn](https://vocify.tn)

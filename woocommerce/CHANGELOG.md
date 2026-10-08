@@ -22,6 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-10-08
+
+### Security
+
+- The default webhook URL is now `https://vocify.tn/api/webhooks/ecommerce`, a domain Vocify owns. The old default `https://app.vocify-ai.com/...` pointed at an **unregistered** domain (pentest 2026-09-18, O1): whoever registered it would have received every store's API key and order PII. Existing installs keep their saved URL; only new installs (and the field's help text) change. Plugin, docs and support links now point to `https://vocify.tn` / `developers@vocify.tn`.
+
+### Added
+
+- **Order-status receiver** (`includes/class-vocify-status-receiver.php`): REST route `?rest_route=/vocify/v1/order-status` that accepts the platform's call-result push, verifies the timestamp-bound HMAC and updates the order status. Before it existed every platform push got `404 rest_no_route`.
+
+### Changed
+
+- **HMAC signing** now covers `"{X-Timestamp}.{raw body}"` (platform contract of 2026-09-18), with one timestamp generated per send; body-only signatures are rejected by the platform. The **signing secret is required** and authenticates both directions.
+- Payload field `phone` -> `customerPhone` (platform schema).
+
+### Fixed
+
+- Duplicate webhook emission on order status change.
+- Codebase brought to PHPStan level 5 and WPCS (WordPress-Extra + PHPCompatibilityWP) clean.
+
 ## [1.1.0] - 2026-08-14
 
 ### Changed
@@ -194,9 +214,9 @@ This project uses [Semantic Versioning](https://semver.org/):
 ## Links
 
 - [GitHub Repository](https://github.com/vocify-ai/woocommerce-plugin)
-- [Vocify AI Platform](https://vocify-ai.com)
-- [Documentation](https://docs.vocify-ai.com/cms-plugins)
-- [Support](mailto:developers@vocify-ai.com)
+- [Vocify AI Platform](https://vocify.tn)
+- [Documentation](https://vocify.tn)
+- [Support](mailto:developers@vocify.tn)
 
 ---
 

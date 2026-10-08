@@ -174,12 +174,11 @@ const signature = generateSignature(orderPayload, API_KEY);
 ### Endpoint URL
 
 ```
-POST https://app.vocify-ai.com/api/webhooks/ecommerce
+POST https://vocify.tn/api/webhooks/ecommerce
 ```
 
 **Environment**:
-- Production: `https://app.vocify-ai.com`
-- Staging: `https://staging.vocify-ai.com` (for testing)
+- Production: `https://vocify.tn`
 
 ### Required HTTP Headers
 
@@ -205,7 +204,7 @@ POST https://app.vocify-ai.com/api/webhooks/ecommerce
 
 ```http
 POST /api/webhooks/ecommerce HTTP/1.1
-Host: app.vocify-ai.com
+Host: vocify.tn
 Content-Type: application/json
 X-Platform: WOOCOMMERCE
 X-API-Key: vcf_live_abc123xyz456def789
@@ -643,7 +642,7 @@ async function handleShopifyOrder(shopifyOrder, apiKey, storeDomain) {
   // Send to Vocify AI
   try {
     const response = await axios.post(
-      'https://app.vocify-ai.com/api/webhooks/ecommerce',
+      'https://vocify.tn/api/webhooks/ecommerce',
       payload,
       {
         headers: {
@@ -820,7 +819,7 @@ function vocify_send_order_webhook($order_id) {
     $signature = hash_hmac('sha256', $raw_body, $api_key);
 
     // Send webhook
-    $response = wp_remote_post('https://app.vocify-ai.com/api/webhooks/ecommerce', array(
+    $response = wp_remote_post('https://vocify.tn/api/webhooks/ecommerce', array(
         'headers' => array(
             'Content-Type' => 'application/json',
             'X-Platform' => 'WOOCOMMERCE',
@@ -1089,7 +1088,7 @@ private function sendOrderWebhook($order)
     $signature = hash_hmac('sha256', $raw_body, $api_key);
 
     // Send webhook using cURL
-    $ch = curl_init('https://app.vocify-ai.com/api/webhooks/ecommerce');
+    $ch = curl_init('https://vocify.tn/api/webhooks/ecommerce');
     curl_setopt_array($ch, array(
         CURLOPT_POST => true,
         CURLOPT_POSTFIELDS => $raw_body,
@@ -1364,7 +1363,7 @@ class WebhookHelper extends AbstractHelper
         ]);
 
         $this->curl->post(
-            'https://app.vocify-ai.com/api/webhooks/ecommerce',
+            'https://vocify.tn/api/webhooks/ecommerce',
             $rawBody
         );
 
@@ -1837,9 +1836,9 @@ function validatePhone(phoneString, defaultCountry = 'US') {
 
 ### E. Contact & Support
 
-- **Documentation**: https://docs.vocify-ai.com/cms-plugins
-- **API Reference**: https://docs.vocify-ai.com/api
-- **Developer Support**: developers@vocify-ai.com
+- **Documentation**: https://vocify.tn
+- **API Reference**: https://vocify.tn
+- **Developer Support**: developers@vocify.tn
 - **GitHub**: https://github.com/vocify-ai
 - **Slack Community**: https://vocify-ai.slack.com
 
@@ -1855,4 +1854,4 @@ function validatePhone(phoneString, defaultCountry = 'US') {
 
 **END OF SPECIFICATION**
 
-*This document is maintained by the Vocify AI Platform Team. For updates or clarifications, please contact developers@vocify-ai.com.*
+*This document is maintained by the Vocify AI Platform Team. For updates or clarifications, please contact developers@vocify.tn.*

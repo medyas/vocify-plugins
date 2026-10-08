@@ -17,8 +17,8 @@
     "authors": [
         {
             "name": "Vocify AI",
-            "email": "developers@vocify-ai.com",
-            "homepage": "https://vocify-ai.com"
+            "email": "developers@vocify.tn",
+            "homepage": "https://vocify.tn"
         }
     ],
     "require": {
@@ -64,8 +64,8 @@
         "cs": "vendor/bin/phpcs"
     },
     "support": {
-        "email": "developers@vocify-ai.com",
-        "docs": "https://docs.vocify-ai.com/cms-plugins",
+        "email": "developers@vocify.tn",
+        "docs": "https://vocify.tn",
         "issues": "https://github.com/vocify-ai/woocommerce-plugin/issues"
     }
 }

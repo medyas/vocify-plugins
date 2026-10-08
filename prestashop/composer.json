@@ -3,12 +3,12 @@
     "description": "Vocify AI - Order Confirmation Calls Module for PrestaShop",
     "type": "prestashop-module",
     "license": "MIT",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "authors": [
         {
             "name": "Vocify AI",
-            "email": "developers@vocify-ai.com",
-            "homepage": "https://vocify-ai.com"
+            "email": "developers@vocify.tn",
+            "homepage": "https://vocify.tn"
         }
     ],
     "require": {

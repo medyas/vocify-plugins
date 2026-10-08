@@ -124,7 +124,7 @@ This method works without Composer but uses basic phone number formatting.
 
 ### Getting Your API Key
 
-1. Log in to your [Vocify AI Dashboard](https://app.vocify-ai.com)
+1. Log in to your [Vocify AI Dashboard](https://vocify.tn)
 2. Navigate to **Agents** → Select your agent
 3. Go to **Integrations** → **Create Integration** → **Select WooCommerce**
 4. Copy the generated API key (format: `vcf_live_XXXXXXXXXXXXXXXXXXXX`)
@@ -141,7 +141,7 @@ Access configuration: **Vocify AI** menu in WordPress admin
 | **Webhook Signing Secret** | Signs each webhook request (`X-Signature`); shown once when you create your API key | Recommended | - |
 | **Enable Integration** | Turn the integration on/off | ✅ Yes | Disabled |
 | **Debug Mode** | Enable verbose logging for troubleshooting | No | Disabled |
-| **Webhook URL** | Vocify AI webhook endpoint | ✅ Yes | `https://app.vocify-ai.com/api/webhooks/ecommerce` |
+| **Webhook URL** | Vocify AI webhook endpoint | ✅ Yes | `https://vocify.tn/api/webhooks/ecommerce` |
 | **Store Domain** | Your store domain (auto-detected, read-only) | - | Auto-detected |
 
 ### Test Connection
@@ -429,8 +429,8 @@ Queue for failed webhooks requiring retry.
 
 ### Getting Help
 
-- **Email**: developers@vocify-ai.com
-- **Documentation**: https://docs.vocify-ai.com/cms-plugins
+- **Email**: developers@vocify.tn
+- **Documentation**: https://vocify.tn
 - **GitHub Issues**: https://github.com/vocify-ai/woocommerce-plugin/issues
 
 ### Reporting Bugs
@@ -489,4 +489,4 @@ We welcome contributions! Please see [claude.md](../../claude.md) for developmen
 
 **Made with ❤️ by Vocify AI**
 
-For more information, visit [https://vocify-ai.com](https://vocify-ai.com)
+For more information, visit [https://vocify.tn](https://vocify.tn)

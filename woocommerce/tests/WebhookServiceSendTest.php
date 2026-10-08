@@ -56,7 +56,7 @@ class WebhookServiceSendTest extends TestCase
     {
         $secret = 'a-test-signing-secret';
         $api_key = 'vcf_live_1234567890abcdef';
-        $webhook_url = 'https://app.vocify-ai.com/api/webhooks/ecommerce';
+        $webhook_url = 'https://vocify.tn/api/webhooks/ecommerce';
         $payload = $this->fixture_payload();
 
         Brain\Monkey\Functions\when('get_site_url')->justReturn('https://my-shop.example.com');
@@ -111,7 +111,7 @@ class WebhookServiceSendTest extends TestCase
     public function test_send_webhook_omits_signature_header_when_no_secret_is_configured()
     {
         $payload = $this->fixture_payload();
-        $webhook_url = 'https://app.vocify-ai.com/api/webhooks/ecommerce';
+        $webhook_url = 'https://vocify.tn/api/webhooks/ecommerce';
 
         Brain\Monkey\Functions\when('get_site_url')->justReturn('https://my-shop.example.com');
         // No signing secret configured locally (O7: legacy fallback path).
@@ -149,7 +149,7 @@ class WebhookServiceSendTest extends TestCase
         Brain\Monkey\Functions\expect('wp_remote_post')->never();
 
         $service = new Vocify_AI_Webhook_Service();
-        $result = $service->send_webhook($payload, 'vcf_live_1234567890abcdef', 'http://app.vocify-ai.com/webhook');
+        $result = $service->send_webhook($payload, 'vcf_live_1234567890abcdef', 'http://vocify.tn/webhook');
 
         $this->assertFalse($result['success']);
         $this->assertSame(0, $result['http_code']);

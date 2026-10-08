@@ -82,7 +82,7 @@ PHPStan (level 5) + PHPCS run in CI (`.github/workflows/ci.yml`, php floor + 8.3
 
 ## Outbound contract: shop → platform
 
-`POST {webhook_url}` (default `https://app.vocify-ai.com/api/webhooks/ecommerce`, see the domain warning below). The platform verifies it in `platform/src/lib/auth/api-key.ts`.
+`POST {webhook_url}` (default `https://vocify.tn/api/webhooks/ecommerce`, the owned domain since 2026-10-08). The platform verifies it in `platform/src/lib/auth/api-key.ts`.
 
 ```
 Content-Type: application/json
@@ -146,7 +146,7 @@ cd plugins/test/e2e
 
 ## Known traps / open owner items
 
-- 🔴 **`vocify-ai.com` is UNREGISTERED** (RDAP 404, pentest 2026-09-18), and `https://app.vocify-ai.com/api/webhooks/ecommerce` is the **default shipped in both plugins**. Whoever registers it would receive every store's API key and customer PII. The owner must register the domain, or the default must change to an owned hostname, before any zip ships. "Staging" (`staging.vocify-ai.com`) does not exist. The sslip.io host is a test VPS, not production.
+- ✅ **Default webhook host fixed (2026-10-08, WC 1.2.0 / PS 1.2.1).** Both plugins used to ship `https://app.vocify-ai.com/api/webhooks/ecommerce`, an **unregistered** domain (pentest O1). The default is now the owned `https://vocify.tn/api/webhooks/ecommerce`. Saved settings on existing installs are not migrated. There is no staging host.
 - WooCommerce: `woocommerce_new_order` fires before `save_items()`, so use the passed `WC_Order` and never re-fetch it (§8.3). It can also fire with `total = 0`, and there is no guard for that.
 - WooCommerce: nothing may be gated on `class_exists('WooCommerce')` at include time. Plugins load in path order (§8.1).
 - PrestaShop: `actionValidateOrder` fires before the state is applied, so use `$params['orderStatus']` (§8.4).
